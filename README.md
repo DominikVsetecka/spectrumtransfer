@@ -44,6 +44,35 @@ Useful tuning options:
 - `--reverb-mode auto|add|remove` chooses strategy (auto can add or reduce).
 - `--reverb-strength 1.0` controls room-processing intensity (0..2).
 
+### Room/Reverb Parameter Guide
+
+Room matching is optional and only applies to the `match` command.
+
+- `--match-reverb`: enables room estimation + post-processing.
+- `--reverb-mode auto`:
+  - adds reverb if the target sounds drier than desired.
+  - removes reverb if the target sounds wetter than desired.
+- `--reverb-mode add`: only adds reverb, never dereverbs.
+- `--reverb-mode remove`: only dereverbs, never adds reverb.
+- `--reverb-strength` range is `0..2`:
+  - `0.3..0.7`: subtle/natural adjustment
+  - `0.8..1.2`: normal range (CLI default is `1.0`)
+  - `>1.2`: aggressive processing; use carefully
+
+Example:
+
+```bash
+python3 eq_transfer.py match \
+  --desired-wav desired_reference.wav \
+  --target-wav vocal_to_fix.wav \
+  --out-wav vocal_matched.wav \
+  --curve-csv eq_curve.csv \
+  --audacity-preset audacity_filter_curve.txt \
+  --match-reverb \
+  --reverb-mode auto \
+  --reverb-strength 0.7
+```
+
 ## 2) Build curve from Audacity spectrum text exports
 
 1. In Audacity, run `Analyze -> Plot Spectrum -> Export...` for both clips:
@@ -120,6 +149,12 @@ For all match modes, it asks for room mode:
 - `1`: auto (recommended, add or remove)
 - `2`: add
 - `3`: remove (dereverb)
+
+Launcher presets map to these CLI values:
+- `0` -> no reverb flags (disabled)
+- `1` -> `--match-reverb --reverb-mode auto --reverb-strength 0.55`
+- `2` -> `--match-reverb --reverb-mode add --reverb-strength 0.45`
+- `3` -> `--match-reverb --reverb-mode remove --reverb-strength 0.75`
 
 All user-facing launcher prompts and status/error messages are in English.
 

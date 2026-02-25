@@ -10,6 +10,7 @@ It supports:
 - Audacity spectrum `.txt` exports -> EQ curve
 - Audacity Filter Curve EQ preset text export
 - Quick MP4 -> WAV audio extraction
+- macOS `.command` launchers with English prompts/messages
 
 ## Requirements
 
@@ -120,6 +121,8 @@ For all match modes, it asks for room mode:
 - `2`: add
 - `3`: remove (dereverb)
 
+All user-facing launcher prompts and status/error messages are in English.
+
 Supported combinations:
 
 1. `desired.wav` + `target.wav`  
@@ -136,3 +139,7 @@ Extracts MP4 audio to WAV, matches EQ, and writes a new matched MP4.
 
 5. `desired.mp4` + `target.mp4` (order matters: desired first, target second)  
 Extracts both MP4 audios to WAV, matches target audio to desired audio, and writes a new matched target MP4.
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for release history and updates.

@@ -44,16 +44,16 @@ stamp() {
 wait_and_exit() {
   local code="$1"
   echo
-  echo "Fenster mit Enter schliessen."
+  echo "Press Enter to close this window."
   read -r _
   exit "$code"
 }
 
 ensure_python_env() {
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-    echo "Erstelle lokale Python-Umgebung in $VENV_DIR ..."
+    echo "Creating local Python environment in $VENV_DIR ..."
     if ! python3 -m venv "$VENV_DIR"; then
-      echo "Konnte venv nicht erstellen."
+      echo "Could not create virtual environment."
       wait_and_exit 1
     fi
   fi
@@ -61,9 +61,9 @@ ensure_python_env() {
   PY_BIN="$VENV_DIR/bin/python"
 
   if ! "$PY_BIN" -c "import numpy, scipy" >/dev/null 2>&1; then
-    echo "Installiere benoetigte Python-Pakete (numpy, scipy) ..."
+    echo "Installing required Python packages (numpy, scipy) ..."
     if ! "$PY_BIN" -m pip install -r "$REQ_FILE"; then
-      echo "Paketinstallation fehlgeschlagen. Bitte Internet/Permissions pruefen."
+      echo "Package installation failed. Please check internet access/permissions."
       wait_and_exit 1
     fi
   fi
@@ -71,7 +71,7 @@ ensure_python_env() {
 
 ensure_ffmpeg() {
   if ! command -v ffmpeg >/dev/null 2>&1; then
-    echo "ffmpeg nicht gefunden. Bitte ffmpeg installieren."
+    echo "ffmpeg not found. Please install ffmpeg."
     wait_and_exit 1
   fi
 }
@@ -79,31 +79,31 @@ ensure_ffmpeg() {
 ask_reverb_match() {
   local ans=""
   echo
-  echo "Raum-Matching (bessere Variante):"
-  echo "  0) aus"
-  echo "  1) auto (empfohlen: fuegt hinzu ODER reduziert)"
-  echo "  2) add (nur Reverb hinzu)"
-  echo "  3) remove (nur Dereverb)"
-  printf "Auswahl [0/1/2/3] (default 1): "
+  echo "Room matching (improved mode):"
+  echo "  0) off"
+  echo "  1) auto (recommended: add OR reduce)"
+  echo "  2) add (add reverb only)"
+  echo "  3) remove (dereverb only)"
+  printf "Choose [0/1/2/3] (default 1): "
   IFS= read -r ans
   ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
 
   case "$ans" in
     ""|"1"|"auto")
       REVERB_ARGS=(--match-reverb --reverb-mode auto --reverb-strength 0.55)
-      echo "Raum-Matching: auto"
+      echo "Room matching: auto"
       ;;
     "2"|"add")
       REVERB_ARGS=(--match-reverb --reverb-mode add --reverb-strength 0.45)
-      echo "Raum-Matching: add"
+      echo "Room matching: add"
       ;;
     "3"|"remove"|"dereverb")
       REVERB_ARGS=(--match-reverb --reverb-mode remove --reverb-strength 0.75)
-      echo "Raum-Matching: remove"
+      echo "Room matching: remove"
       ;;
     *)
       REVERB_ARGS=()
-      echo "Raum-Matching: aus"
+      echo "Room matching: off"
       ;;
   esac
 }
@@ -143,29 +143,29 @@ if [[ $# -eq 2 ]]; then
   B="$2"
 else
   echo "EQ Transfer"
-  echo "Gib 2 Dateipfade ein (Drag&Drop aus Finder ins Terminal)."
-  echo "Modi:"
+  echo "Enter 2 file paths (drag & drop from Finder into Terminal)."
+  echo "Modes:"
   echo "  1) desired.wav + target.wav"
   echo "  2) desired.txt + target.txt"
   echo "  3) curve.csv + target.wav"
   echo "  4) desired.wav + target.mp4"
-  echo "  5) desired.mp4 + target.mp4 (Reihenfolge wichtig)"
+  echo "  5) desired.mp4 + target.mp4 (order matters)"
   echo
-  printf "Datei 1: "
+  printf "File 1: "
   IFS= read -r RAW_A
-  printf "Datei 2: "
+  printf "File 2: "
   IFS= read -r RAW_B
   A="$(normalize_input_path "$RAW_A")"
   B="$(normalize_input_path "$RAW_B")"
 fi
 
 if [[ -z "${A:-}" || -z "${B:-}" ]]; then
-  echo "Bitte zwei gueltige Dateipfade eingeben."
+  echo "Please enter two valid file paths."
   wait_and_exit 1
 fi
 
 if [[ ! -f "$A" || ! -f "$B" ]]; then
-  echo "Beide Inputs muessen existierende Dateien sein."
+  echo "Both inputs must be existing files."
   wait_and_exit 1
 fi
 
@@ -191,7 +191,7 @@ if [[ "$EA" == "wav" && "$EB" == "wav" ]]; then
     --curve-csv "$OUT_CSV" \
     --audacity-preset "$OUT_PRESET" \
     "${REVERB_ARGS[@]}"; then
-    echo "Fehler beim EQ-Match."
+    echo "EQ match failed."
     wait_and_exit 1
   fi
 
@@ -224,13 +224,13 @@ fi
   OUT_MP4="$TARGET_DIR/${TARGET_BASE}_matched_${TS}.mp4"
 
   echo "Mode: match+remux (desired.wav + target.mp4)"
-  echo "Extrahiere Audio aus MP4 ..."
+  echo "Extracting audio from MP4 ..."
   if ! extract_mp4_audio_wav "$TARGET_MP4" "$EXTRACT_WAV"; then
-    echo "Fehler beim Extrahieren der Audio-Spur aus MP4."
+    echo "Failed to extract audio track from MP4."
     wait_and_exit 1
   fi
 
-  echo "Passe EQ auf desired.wav an ..."
+  echo "Matching EQ to desired.wav ..."
   ask_reverb_match
   if ! "$PY_BIN" "$PY_SCRIPT" match \
     --desired-wav "$DESIRED_WAV" \
@@ -239,13 +239,13 @@ fi
     --curve-csv "$OUT_CSV" \
     --audacity-preset "$OUT_PRESET" \
     "${REVERB_ARGS[@]}"; then
-    echo "Fehler beim EQ-Match der extrahierten Audio-Spur."
+    echo "EQ match on extracted audio track failed."
     wait_and_exit 1
   fi
 
-  echo "Schreibe bearbeitete Audio-Spur zurueck in MP4 ..."
+  echo "Writing processed audio track back to MP4 ..."
   if ! remux_target_with_wav "$TARGET_MP4" "$MATCHED_WAV" "$OUT_MP4"; then
-    echo "Fehler beim Remux zur neuen MP4."
+    echo "Failed to remux into new MP4."
     wait_and_exit 1
   fi
 
@@ -275,19 +275,19 @@ if [[ "$EA" == "mp4" && "$EB" == "mp4" ]]; then
   OUT_MP4="$TARGET_DIR/${TARGET_BASE}_matched_${TS}.mp4"
 
   echo "Mode: match+remux (desired.mp4 + target.mp4)"
-  echo "Extrahiere Audio aus desired.mp4 ..."
+  echo "Extracting audio from desired.mp4 ..."
   if ! extract_mp4_audio_wav "$DESIRED_MP4" "$DESIRED_WAV"; then
-    echo "Fehler beim Extrahieren der Audio-Spur aus desired.mp4."
+    echo "Failed to extract audio track from desired.mp4."
     wait_and_exit 1
   fi
 
-  echo "Extrahiere Audio aus target.mp4 ..."
+  echo "Extracting audio from target.mp4 ..."
   if ! extract_mp4_audio_wav "$TARGET_MP4" "$EXTRACT_WAV"; then
-    echo "Fehler beim Extrahieren der Audio-Spur aus target.mp4."
+    echo "Failed to extract audio track from target.mp4."
     wait_and_exit 1
   fi
 
-  echo "Passe target-Audio auf desired-Audio an ..."
+  echo "Matching target audio to desired audio ..."
   ask_reverb_match
   if ! "$PY_BIN" "$PY_SCRIPT" match \
     --desired-wav "$DESIRED_WAV" \
@@ -296,13 +296,13 @@ if [[ "$EA" == "mp4" && "$EB" == "mp4" ]]; then
     --curve-csv "$OUT_CSV" \
     --audacity-preset "$OUT_PRESET" \
     "${REVERB_ARGS[@]}"; then
-    echo "Fehler beim EQ-Match der extrahierten Audio-Spuren."
+    echo "EQ match for extracted audio tracks failed."
     wait_and_exit 1
   fi
 
-  echo "Schreibe bearbeitete Audio-Spur zurueck in target.mp4 ..."
+  echo "Writing processed audio track back to target.mp4 ..."
   if ! remux_target_with_wav "$TARGET_MP4" "$MATCHED_WAV" "$OUT_MP4"; then
-    echo "Fehler beim Remux zur neuen MP4."
+    echo "Failed to remux into new MP4."
     wait_and_exit 1
   fi
 
@@ -328,7 +328,7 @@ if [[ "$EA" == "txt" && "$EB" == "txt" ]]; then
     --target-spectrum "$B" \
     --curve-csv "$OUT_CSV" \
     --audacity-preset "$OUT_PRESET"; then
-    echo "Fehler beim Erstellen der EQ-Kurve."
+    echo "Failed to build EQ curve."
     wait_and_exit 1
   fi
 
@@ -359,7 +359,7 @@ if [[ -n "$CURVE" && -n "$TARGET" ]]; then
     --curve-csv "$CURVE" \
     --target-wav "$TARGET" \
     --out-wav "$OUT_WAV"; then
-    echo "Fehler beim Anwenden der EQ-Kurve."
+    echo "Failed to apply EQ curve."
     wait_and_exit 1
   fi
 
@@ -367,8 +367,8 @@ if [[ -n "$CURVE" && -n "$TARGET" ]]; then
   wait_and_exit 0
 fi
 
-echo "Unbekannte Kombination:"
+echo "Unknown combination:"
 echo " - $A"
 echo " - $B"
-echo "Erlaubt: wav+wav, txt+txt, csv+wav, wav+mp4, mp4+mp4"
+echo "Allowed: wav+wav, txt+txt, csv+wav, wav+mp4, mp4+mp4"
 wait_and_exit 1

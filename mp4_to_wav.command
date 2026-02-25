@@ -31,23 +31,23 @@ if [[ $# -ge 1 ]]; then
   INPUT_PATH="$1"
 else
   echo "MP4 -> WAV"
-  echo "Ziehe eine .mp4 Datei in dieses Fenster und druecke Enter."
+  echo "Drag a .mp4 file into this window and press Enter."
   echo
-  printf "Dateipfad: "
+  printf "File path: "
   IFS= read -r RAW_INPUT
   INPUT_PATH="$(normalize_input_path "$RAW_INPUT")"
 fi
 
 if [[ -z "${INPUT_PATH:-}" ]]; then
-  echo "Kein Dateipfad eingegeben."
-  echo "Fenster mit Enter schliessen."
+  echo "No file path entered."
+  echo "Press Enter to close this window."
   read -r _
   exit 1
 fi
 
 if [[ ! -f "$INPUT_PATH" ]]; then
-  echo "Datei nicht gefunden: $INPUT_PATH"
-  echo "Fenster mit Enter schliessen."
+  echo "File not found: $INPUT_PATH"
+  echo "Press Enter to close this window."
   read -r _
   exit 1
 fi
@@ -55,16 +55,16 @@ fi
 ext="${INPUT_PATH##*.}"
 ext_lc="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
 if [[ "$ext_lc" != "mp4" ]]; then
-  echo "Nicht unterstuetzt (nur .mp4): $INPUT_PATH"
-  echo "Fenster mit Enter schliessen."
+  echo "Unsupported input (only .mp4): $INPUT_PATH"
+  echo "Press Enter to close this window."
   read -r _
   exit 1
 fi
 
 echo
-echo "Konvertiere: $INPUT_PATH"
+echo "Converting: $INPUT_PATH"
 python3 "$PY_SCRIPT" "$INPUT_PATH"
 
 echo
-echo "Fertig. Fenster mit Enter schliessen."
+echo "Done. Press Enter to close this window."
 read -r _

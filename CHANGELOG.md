@@ -7,9 +7,12 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 ## [Unreleased]
 
 ### Changed
-- Translated all user-facing launcher text in `eq_transfer.command` and `mp4_to_wav.command` to English.
-- Updated `README.md` to reflect English launcher prompts and added a changelog reference.
-- Expanded documentation for room/reverb parameters (`--match-reverb`, `--reverb-mode`, `--reverb-strength`) with examples and launcher-to-CLI mapping.
+- Unified launcher workflow into a single macOS entrypoint: `spectrumtransfer.command`.
+- Renamed core script from `eq_transfer.py` to `spectrumtransfer.py` and updated launcher/README references.
+- Added explicit Python version gate in launcher (`python3 >= 3.9`) before environment setup.
+- Added dynamic loudness chain controls (auto-level, compressor, limiter) and de-esser options to processing flow.
+- Removed room/reverb feature from the user-facing workflow and documentation.
+- Updated `README.md` with platform notes: `.command` launcher is macOS-specific, Python script is cross-platform.
 
 ## [0.1.0] - 2026-02-25
 

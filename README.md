@@ -13,7 +13,7 @@ Core idea:
 - Optional de-esser
 - Optional auto-level + compressor + limiter
 - MP4 audio extraction/remux workflows via the master command
-- Single user-facing launcher: `spectrum_master.command`
+- Single user-facing launcher: `spectrumtransfer.command`
 
 ## Requirements
 
@@ -32,7 +32,7 @@ python3 -m pip install numpy scipy
 Use only this launcher:
 
 ```bash
-./spectrum_master.command
+./spectrumtransfer.command
 ```
 
 The launcher validates `python3` and requires version `>= 3.9` before creating `.venv` or installing dependencies.

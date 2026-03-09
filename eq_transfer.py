@@ -1270,51 +1270,6 @@ def build_common_parser() -> argparse.ArgumentParser:
     match.add_argument("--n-fft", type=int, default=4096)
     match.add_argument("--hop", type=int, default=1024)
     match.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix, 0..1")
-    match.add_argument(
-        "--match-reverb",
-        action="store_true",
-        help="Try to match room/reverb feel from desired recording (heuristic).",
-    )
-    match.add_argument(
-        "--reverb-mode",
-        choices=["auto", "add", "remove"],
-        default="auto",
-        help="Reverb strategy when --match-reverb is enabled (default: auto).",
-    )
-    match.add_argument(
-        "--reverb-strength",
-        type=float,
-        default=1.0,
-        help="Strength multiplier for reverb processing (0..2, default 1).",
-    )
-    match.add_argument(
-        "--room-export-variants",
-        action="store_true",
-        help="Export room variants (_room_off/_room_light/_room_mid) when room matching is enabled.",
-    )
-    match.add_argument(
-        "--room-light-scale",
-        type=float,
-        default=0.50,
-        help="Intensity scale for _room_light variant.",
-    )
-    match.add_argument(
-        "--room-mid-scale",
-        type=float,
-        default=1.00,
-        help="Intensity scale for _room_mid variant.",
-    )
-    match.add_argument(
-        "--prefer-ml-dereverb",
-        action="store_true",
-        help="Prefer ONNX ML dereverb model for room remove mode (fallback to heuristic).",
-    )
-    match.add_argument(
-        "--ml-dereverb-model",
-        type=Path,
-        default=Path("models/dereverb.onnx"),
-        help="Path to optional ONNX dereverb model.",
-    )
     add_common_curve_args(match)
     add_dynamics_args(match)
 
@@ -1389,23 +1344,6 @@ def main() -> int:
             filter_length=args.audacity_filter_length,
         )
         post_paths = [args.out_wav]
-        if args.match_reverb:
-            transfer, variants = apply_reverb_match_to_wav(
-                desired_wav=args.desired_wav,
-                target_wav=args.target_wav,
-                processed_wav=args.out_wav,
-                strength=args.reverb_strength,
-                mode=args.reverb_mode,
-                export_variants=args.room_export_variants,
-                light_scale=args.room_light_scale,
-                mid_scale=args.room_mid_scale,
-                prefer_ml_dereverb=args.prefer_ml_dereverb,
-                ml_dereverb_model=args.ml_dereverb_model,
-            )
-            print(transfer.reason)
-            if args.room_export_variants:
-                post_paths = [variants["off"], variants["light"], variants["mid"]]
-                print(f"[room] variants: off={variants['off']}, light={variants['light']}, mid={variants['mid']}")
         if args.de_ess:
             for p in post_paths:
                 msg = apply_deesser_to_wav(

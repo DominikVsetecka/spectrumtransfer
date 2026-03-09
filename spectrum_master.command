@@ -6,10 +6,8 @@ PY_SCRIPT="$SCRIPT_DIR/eq_transfer.py"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 VENV_DIR="$SCRIPT_DIR/.venv"
 PY_BIN=""
-REVERB_ARGS=()
 DYNAMICS_ARGS=()
 DEESS_ARGS=()
-ROOM_ARGS=()
 
 normalize_input_path() {
   local raw="$1"
@@ -211,42 +209,6 @@ ask_deesser_profile() {
   esac
 }
 
-ask_reverb_match() {
-  local ans=""
-  echo
-  echo "Room matching:"
-  echo "  0) off"
-  echo "  1) auto (recommended)"
-  echo "  2) add"
-  echo "  3) remove"
-  printf "Choose [0/1/2/3] (default 1): "
-  IFS= read -r ans
-  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
-
-  case "$ans" in
-    ""|"1"|"auto")
-      REVERB_ARGS=(--match-reverb --reverb-mode auto --reverb-strength 0.55)
-      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00 --prefer-ml-dereverb --ml-dereverb-model "$SCRIPT_DIR/models/dereverb.onnx")
-      echo "Room matching: auto"
-      ;;
-    "2"|"add")
-      REVERB_ARGS=(--match-reverb --reverb-mode add --reverb-strength 0.45)
-      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00)
-      echo "Room matching: add"
-      ;;
-    "3"|"remove"|"dereverb")
-      REVERB_ARGS=(--match-reverb --reverb-mode remove --reverb-strength 0.75)
-      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00 --prefer-ml-dereverb --ml-dereverb-model "$SCRIPT_DIR/models/dereverb.onnx")
-      echo "Room matching: remove"
-      ;;
-    *)
-      REVERB_ARGS=()
-      ROOM_ARGS=()
-      echo "Room matching: off"
-      ;;
-  esac
-}
-
 run_match_command() {
   local desired_wav="$1"
   local target_wav="$2"
@@ -264,12 +226,6 @@ run_match_command() {
     --audacity-preset "$audacity_preset"
   )
 
-  if (( ${#REVERB_ARGS[@]} > 0 )); then
-    cmd+=("${REVERB_ARGS[@]}")
-    if (( ${#ROOM_ARGS[@]} > 0 )); then
-      cmd+=("${ROOM_ARGS[@]}")
-    fi
-  fi
   if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
     cmd+=("${DYNAMICS_ARGS[@]}")
   fi
@@ -325,7 +281,6 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
-    ask_reverb_match
 
     if run_match_command "$a" "$b" "$out_wav" "$out_csv" "$out_preset"; then
       echo "Output WAV: $out_wav"
@@ -422,7 +377,6 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
-    ask_reverb_match
 
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to MP4 ..."
@@ -465,7 +419,6 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
-    ask_reverb_match
 
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to target MP4 ..."

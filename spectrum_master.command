@@ -9,6 +9,7 @@ PY_BIN=""
 REVERB_ARGS=()
 DYNAMICS_ARGS=()
 DEESS_ARGS=()
+ROOM_ARGS=()
 
 normalize_input_path() {
   local raw="$1"
@@ -225,18 +226,22 @@ ask_reverb_match() {
   case "$ans" in
     ""|"1"|"auto")
       REVERB_ARGS=(--match-reverb --reverb-mode auto --reverb-strength 0.55)
+      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00 --prefer-ml-dereverb --ml-dereverb-model "$SCRIPT_DIR/models/dereverb.onnx")
       echo "Room matching: auto"
       ;;
     "2"|"add")
       REVERB_ARGS=(--match-reverb --reverb-mode add --reverb-strength 0.45)
+      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00)
       echo "Room matching: add"
       ;;
     "3"|"remove"|"dereverb")
       REVERB_ARGS=(--match-reverb --reverb-mode remove --reverb-strength 0.75)
+      ROOM_ARGS=(--room-export-variants --room-light-scale 0.50 --room-mid-scale 1.00 --prefer-ml-dereverb --ml-dereverb-model "$SCRIPT_DIR/models/dereverb.onnx")
       echo "Room matching: remove"
       ;;
     *)
       REVERB_ARGS=()
+      ROOM_ARGS=()
       echo "Room matching: off"
       ;;
   esac
@@ -261,6 +266,9 @@ run_match_command() {
 
   if (( ${#REVERB_ARGS[@]} > 0 )); then
     cmd+=("${REVERB_ARGS[@]}")
+    if (( ${#ROOM_ARGS[@]} > 0 )); then
+      cmd+=("${ROOM_ARGS[@]}")
+    fi
   fi
   if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
     cmd+=("${DYNAMICS_ARGS[@]}")

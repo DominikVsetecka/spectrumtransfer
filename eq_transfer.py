@@ -16,7 +16,7 @@ import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Dict, Iterable, Tuple
 
 import numpy as np
 from scipy.io import wavfile
@@ -45,6 +45,13 @@ class Curve:
 class ReverbMetrics:
     rt60_s: float
     tail_direct_ratio: float
+
+
+@dataclass
+class ReverbProfile:
+    fullband: ReverbMetrics
+    band_rt60_s: np.ndarray
+    band_tail_direct_ratio: np.ndarray
 
 
 @dataclass
@@ -651,6 +658,40 @@ def _detect_onsets(env: np.ndarray, hop_s: float) -> np.ndarray:
     return np.asarray(picked, dtype=np.int64)
 
 
+def _speech_activity_mask(env: np.ndarray) -> np.ndarray:
+    if len(env) < 6:
+        return np.ones(len(env), dtype=bool)
+
+    env_db = _lin_to_dbfs(env + EPS)
+    floor_db = float(np.percentile(env_db, 20))
+    strong_thr = floor_db + 10.0
+    weak_thr = floor_db + 6.0
+
+    mask = np.zeros(len(env_db), dtype=bool)
+    active = False
+    for i, lv in enumerate(env_db):
+        if not active and lv >= strong_thr:
+            active = True
+        elif active and lv < weak_thr:
+            active = False
+        mask[i] = active
+
+    # Bridge tiny gaps to avoid choppy frame gating.
+    gap = 0
+    max_gap = 4
+    for i in range(len(mask)):
+        if mask[i]:
+            if 0 < gap <= max_gap:
+                mask[i - gap : i] = True
+            gap = 0
+        else:
+            gap += 1
+
+    if not np.any(mask):
+        return env_db >= (floor_db + 3.0)
+    return mask
+
+
 def estimate_reverb_metrics(mono_audio: np.ndarray, sr: int) -> ReverbMetrics:
     x = mono_audio.astype(np.float32, copy=False)
     peak = float(np.max(np.abs(x))) if len(x) else 0.0
@@ -658,6 +699,7 @@ def estimate_reverb_metrics(mono_audio: np.ndarray, sr: int) -> ReverbMetrics:
         x = x / peak
 
     env, hop_s = _rms_envelope(x, sr=sr, frame_ms=20.0, hop_ms=5.0)
+    speech_mask = _speech_activity_mask(env)
     onsets = _detect_onsets(env, hop_s=hop_s)
 
     direct_n = max(1, int(round(0.04 / max(hop_s, EPS))))
@@ -669,6 +711,11 @@ def estimate_reverb_metrics(mono_audio: np.ndarray, sr: int) -> ReverbMetrics:
     for onset in onsets:
         end_idx = onset + tail_end
         if end_idx >= len(env):
+            continue
+        if not np.any(speech_mask[onset : onset + direct_n]):
+            continue
+        speech_density = float(np.mean(speech_mask[onset:end_idx]))
+        if speech_density < 0.18:
             continue
 
         direct = np.mean(env[onset : onset + direct_n] ** 2) + EPS
@@ -698,6 +745,26 @@ def estimate_reverb_metrics(mono_audio: np.ndarray, sr: int) -> ReverbMetrics:
     return ReverbMetrics(rt60_s=rt60_s, tail_direct_ratio=ratio)
 
 
+def estimate_reverb_profile(mono_audio: np.ndarray, sr: int) -> ReverbProfile:
+    full = estimate_reverb_metrics(mono_audio, sr=sr)
+
+    bands_hz = ((160.0, 1200.0), (1200.0, 4200.0), (4200.0, 10000.0))
+    rt60 = np.zeros(len(bands_hz), dtype=np.float64)
+    ratios = np.zeros(len(bands_hz), dtype=np.float64)
+
+    for i, (lo, hi) in enumerate(bands_hz):
+        band = _one_pole_lowpass(_one_pole_highpass(mono_audio, sr=sr, cutoff_hz=lo), sr=sr, cutoff_hz=hi)
+        m = estimate_reverb_metrics(band, sr=sr)
+        rt60[i] = m.rt60_s
+        ratios[i] = m.tail_direct_ratio
+
+    return ReverbProfile(
+        fullband=full,
+        band_rt60_s=rt60.astype(np.float32),
+        band_tail_direct_ratio=ratios.astype(np.float32),
+    )
+
+
 def estimate_reverb_transfer(
     desired_mono: np.ndarray,
     target_mono: np.ndarray,
@@ -710,11 +777,18 @@ def estimate_reverb_transfer(
     if mode not in {"auto", "add", "remove"}:
         mode = "auto"
 
-    desired = estimate_reverb_metrics(desired_mono, sr=sr)
-    target = estimate_reverb_metrics(target_mono, sr=sr)
+    desired = estimate_reverb_profile(desired_mono, sr=sr)
+    target = estimate_reverb_profile(target_mono, sr=sr)
 
-    rt_gap = desired.rt60_s - target.rt60_s
-    ratio_gap = desired.tail_direct_ratio - target.tail_direct_ratio
+    band_weights = np.asarray([0.25, 0.50, 0.25], dtype=np.float32)
+    band_rt_gap = float(np.sum((desired.band_rt60_s - target.band_rt60_s) * band_weights))
+    band_ratio_gap = float(np.sum((desired.band_tail_direct_ratio - target.band_tail_direct_ratio) * band_weights))
+
+    full_rt_gap = desired.fullband.rt60_s - target.fullband.rt60_s
+    full_ratio_gap = desired.fullband.tail_direct_ratio - target.fullband.tail_direct_ratio
+
+    rt_gap = (0.6 * full_rt_gap) + (0.4 * band_rt_gap)
+    ratio_gap = (0.6 * full_ratio_gap) + (0.4 * band_ratio_gap)
 
     add_needed = (rt_gap > 0.10) or (ratio_gap > 0.07)
     remove_needed = (rt_gap < -0.10) or (ratio_gap < -0.07)
@@ -733,7 +807,7 @@ def estimate_reverb_transfer(
         # Conservative wet estimate to avoid "washed out" vocals.
         wet = 0.02 + max(0.0, ratio_gap) * 0.10 + max(0.0, rt_gap) * 0.05
         wet = float(np.clip(wet * strength, 0.015, 0.22))
-        rt60 = float(np.clip(desired.rt60_s, 0.15, 3.0))
+        rt60 = float(np.clip(desired.fullband.rt60_s, 0.15, 3.0))
         return ReverbTransfer(
             action="add",
             rt60_s=rt60,
@@ -741,60 +815,141 @@ def estimate_reverb_transfer(
             dereverb_amount=0.0,
             reason=(
                 f"[reverb] add: wet={wet:.2f}, rt60={rt60:.2f}s "
-                f"(desired rt60={desired.rt60_s:.2f}s, target rt60={target.rt60_s:.2f}s)."
+                f"(desired rt60={desired.fullband.rt60_s:.2f}s, target rt60={target.fullband.rt60_s:.2f}s)."
             ),
         )
 
     if want_remove:
-        rt_diff = max(0.0, target.rt60_s - desired.rt60_s)
-        ratio_diff = max(0.0, target.tail_direct_ratio - desired.tail_direct_ratio)
+        rt_diff = max(0.0, target.fullband.rt60_s - desired.fullband.rt60_s)
+        ratio_diff = max(
+            0.0,
+            target.fullband.tail_direct_ratio - desired.fullband.tail_direct_ratio,
+        )
         amount = 0.16 + ratio_diff * 0.28 + rt_diff * 0.18
         amount = float(np.clip(amount * strength, 0.10, 0.80))
         return ReverbTransfer(
             action="remove",
-            rt60_s=desired.rt60_s,
+            rt60_s=desired.fullband.rt60_s,
             wet_mix=0.0,
             dereverb_amount=amount,
             reason=(
                 f"[reverb] remove: amount={amount:.2f} "
-                f"(desired rt60={desired.rt60_s:.2f}s, target rt60={target.rt60_s:.2f}s)."
+                f"(desired rt60={desired.fullband.rt60_s:.2f}s, target rt60={target.fullband.rt60_s:.2f}s)."
             ),
         )
 
     return ReverbTransfer(
         action="none",
-        rt60_s=desired.rt60_s,
+        rt60_s=desired.fullband.rt60_s,
         wet_mix=0.0,
         dereverb_amount=0.0,
         reason=(
             f"[reverb] skipped: no clear reverb mismatch "
-            f"(desired rt60={desired.rt60_s:.2f}s, target rt60={target.rt60_s:.2f}s)."
+            f"(desired rt60={desired.fullband.rt60_s:.2f}s, target rt60={target.fullband.rt60_s:.2f}s)."
         ),
     )
 
 
-def build_synthetic_ir(sr: int, rt60_s: float, pre_delay_ms: float = 18.0) -> np.ndarray:
+def _estimate_tail_envelope_template(mono_audio: np.ndarray, sr: int, tail_n: int) -> np.ndarray:
+    x = mono_audio.astype(np.float32, copy=False)
+    peak = float(np.max(np.abs(x))) if len(x) else 0.0
+    if peak > EPS:
+        x = x / peak
+
+    env, hop_s = _rms_envelope(x, sr=sr, frame_ms=20.0, hop_ms=5.0)
+    onsets = _detect_onsets(env, hop_s=hop_s)
+    direct_n = max(1, int(round(0.03 * sr)))
+    tail_len = max(direct_n + 64, tail_n)
+
+    chunks = []
+    for idx in onsets:
+        s = int(round(idx * hop_s * sr))
+        e = s + tail_len
+        if s < 0 or e > len(x):
+            continue
+        seg = x[s:e]
+        direct_rms = float(np.sqrt(np.mean(seg[:direct_n] * seg[:direct_n]) + EPS))
+        if direct_rms < 1e-4:
+            continue
+        tail_abs = np.abs(seg[direct_n:]) / direct_rms
+        src = np.linspace(0.0, 1.0, num=len(tail_abs), dtype=np.float64)
+        dst = np.linspace(0.0, 1.0, num=tail_n, dtype=np.float64)
+        chunks.append(np.interp(dst, src, tail_abs).astype(np.float32))
+        if len(chunks) >= 120:
+            break
+
+    if not chunks:
+        t = np.arange(tail_n, dtype=np.float32) / float(sr)
+        return np.exp(-6.907755 * t / 0.40).astype(np.float32)
+
+    median_env = np.median(np.stack(chunks, axis=0), axis=0).astype(np.float32)
+    median_env = gaussian_filter1d(median_env, sigma=max(1.0, tail_n / 300.0), mode="nearest")
+    median_env = np.maximum(median_env, 0.0)
+    max_v = float(np.max(median_env)) if len(median_env) else 0.0
+    if max_v > EPS:
+        median_env /= max_v
+    return median_env
+
+
+def _estimate_tail_tone_cutoff(mono_audio: np.ndarray, sr: int) -> float:
+    hi = _one_pole_highpass(mono_audio.astype(np.float32, copy=False), sr=sr, cutoff_hz=3500.0)
+    lo = _one_pole_lowpass(mono_audio.astype(np.float32, copy=False), sr=sr, cutoff_hz=2200.0)
+    hi_rms = float(np.sqrt(np.mean(hi * hi) + EPS))
+    lo_rms = float(np.sqrt(np.mean(lo * lo) + EPS))
+    ratio = hi_rms / max(lo_rms, EPS)
+    cutoff = 5200.0 + (2200.0 * np.clip(ratio, 0.0, 1.8))
+    return float(np.clip(cutoff, 4200.0, 9000.0))
+
+
+def _estimate_early_reflections(mono_audio: np.ndarray, sr: int) -> Tuple[float, float, float]:
+    x = _one_pole_highpass(mono_audio.astype(np.float32, copy=False), sr=sr, cutoff_hz=180.0)
+    n = min(len(x), sr * 12)
+    if n < sr // 4:
+        return (7.0, 14.0, 24.0)
+    xx = x[:n].astype(np.float64)
+    corr = np.correlate(xx, xx, mode="full")
+    corr = corr[n - 1 :]
+    start = int(sr * 0.004)
+    end = min(len(corr), int(sr * 0.045))
+    if end - start < 8:
+        return (7.0, 14.0, 24.0)
+    local = corr[start:end]
+    if np.max(local) <= 0:
+        return (7.0, 14.0, 24.0)
+    picks = np.argpartition(local, -3)[-3:]
+    lags = np.sort(picks + start)
+    return tuple(float(1000.0 * lag / sr) for lag in lags)
+
+
+def build_matched_convolution_ir(
+    desired_mono: np.ndarray,
+    sr: int,
+    rt60_s: float,
+    pre_delay_ms: float = 14.0,
+) -> np.ndarray:
     pre = max(0, int(sr * (pre_delay_ms / 1000.0)))
-    tail_n = int(np.clip(sr * max(rt60_s, 0.08) * 1.2, sr * 0.10, sr * 3.0))
+    tail_n = int(np.clip(sr * max(rt60_s, 0.10) * 1.25, sr * 0.12, sr * 3.2))
     n = pre + tail_n
+
+    tail_template = _estimate_tail_envelope_template(desired_mono, sr=sr, tail_n=tail_n)
+    t = np.arange(tail_n, dtype=np.float32) / float(sr)
+    exp_decay = np.exp(-6.907755 * t / max(rt60_s, 0.10)).astype(np.float32)
+    tail_env = (0.65 * tail_template) + (0.35 * exp_decay)
+    tail_env = np.maximum(tail_env, 0.0)
 
     rng = np.random.default_rng(0)
     noise = rng.standard_normal(tail_n).astype(np.float32)
-    t = np.arange(tail_n, dtype=np.float32) / float(sr)
-    decay = np.exp(-6.907755 * t / max(rt60_s, 0.08)).astype(np.float32)
-    tail = noise * decay
-
-    alpha = float(np.exp(-2.0 * np.pi * 6000.0 / float(sr)))
-    lp = np.zeros_like(tail)
-    prev = 0.0
-    for i, v in enumerate(tail):
-        prev = (1.0 - alpha) * float(v) + alpha * prev
-        lp[i] = prev
+    noise = _one_pole_highpass(noise, sr=sr, cutoff_hz=140.0)
+    cutoff = _estimate_tail_tone_cutoff(desired_mono, sr=sr)
+    noise = _one_pole_lowpass(noise, sr=sr, cutoff_hz=cutoff)
+    tail = noise * tail_env
 
     ir = np.zeros(n, dtype=np.float32)
-    ir[pre:] = lp
-    for delay_ms, gain in ((7.0, 0.35), (13.0, 0.24), (21.0, 0.16), (34.0, 0.10)):
-        idx = min(n - 1, pre + int(sr * (delay_ms / 1000.0)))
+    ir[0] = 1.0
+    ir[pre:] += 0.60 * tail
+
+    for delay_ms, gain in zip(_estimate_early_reflections(desired_mono, sr=sr), (0.22, 0.14, 0.09)):
+        idx = min(n - 1, int(sr * (delay_ms / 1000.0)))
         ir[idx] += float(gain)
 
     norm = float(np.sqrt(np.sum(ir * ir) + EPS))
@@ -821,19 +976,22 @@ def _one_pole_highpass(x: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
     return (x - lp).astype(np.float32)
 
 
-def apply_synthetic_reverb(audio: np.ndarray, sr: int, rt60_s: float, wet_mix: float) -> np.ndarray:
+def apply_convolution_reverb(
+    audio: np.ndarray,
+    desired_mono: np.ndarray,
+    sr: int,
+    rt60_s: float,
+    wet_mix: float,
+) -> np.ndarray:
     wet_mix = float(np.clip(wet_mix, 0.0, 1.0))
     if wet_mix <= 0.0:
         return audio
 
-    ir = build_synthetic_ir(sr=sr, rt60_s=rt60_s)
+    ir = build_matched_convolution_ir(desired_mono=desired_mono, sr=sr, rt60_s=rt60_s)
     y = np.zeros_like(audio, dtype=np.float32)
 
     for ch in range(audio.shape[1]):
         wet = fftconvolve(audio[:, ch], ir, mode="full")[: audio.shape[0]].astype(np.float32)
-        # Keep wet signal out of muddy lows and harsh highs.
-        wet = _one_pole_highpass(wet, sr=sr, cutoff_hz=170.0)
-        wet = _one_pole_lowpass(wet, sr=sr, cutoff_hz=7000.0)
         y[:, ch] = ((1.0 - wet_mix) * audio[:, ch]) + (wet_mix * wet)
 
     peak = float(np.max(np.abs(y))) if y.size else 0.0
@@ -842,7 +1000,13 @@ def apply_synthetic_reverb(audio: np.ndarray, sr: int, rt60_s: float, wet_mix: f
     return y
 
 
-def reduce_late_reverb(audio: np.ndarray, sr: int, amount: float, n_fft: int = 2048, hop: int = 512) -> np.ndarray:
+def reduce_late_reverb(
+    audio: np.ndarray,
+    sr: int,
+    amount: float,
+    n_fft: int = 2048,
+    hop: int = 512,
+) -> np.ndarray:
     amount = float(np.clip(amount, 0.0, 1.0))
     if amount <= 0.0:
         return audio
@@ -895,13 +1059,55 @@ def reduce_late_reverb(audio: np.ndarray, sr: int, amount: float, n_fft: int = 2
     return out
 
 
+def maybe_run_ml_dereverb(
+    audio: np.ndarray,
+    amount: float,
+    model_path: Path | None,
+) -> Tuple[np.ndarray, bool, str]:
+    if model_path is None:
+        return audio, False, "[reverb] ML dereverb skipped: no model path provided."
+    if not model_path.exists():
+        return audio, False, f"[reverb] ML dereverb skipped: model not found at {model_path}."
+
+    try:
+        import onnxruntime as ort  # type: ignore
+    except Exception:
+        return audio, False, "[reverb] ML dereverb skipped: onnxruntime not installed."
+
+    try:
+        sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        in_name = sess.get_inputs()[0].name
+        out_name = sess.get_outputs()[0].name
+
+        y = np.zeros_like(audio, dtype=np.float32)
+        for ch in range(audio.shape[1]):
+            x = audio[:, ch].astype(np.float32, copy=False)
+            x_in = x[np.newaxis, np.newaxis, :]
+            pred = sess.run([out_name], {in_name: x_in})[0]
+            pred = np.asarray(pred).reshape(-1).astype(np.float32)
+            pred = _match_length(pred, len(x)).astype(np.float32, copy=False)
+            y[:, ch] = ((1.0 - amount) * x) + (amount * pred)
+
+        peak = float(np.max(np.abs(y))) if y.size else 0.0
+        if peak > 1.0:
+            y /= peak * 1.01
+        return y, True, f"[reverb] ML dereverb used: {model_path}"
+    except Exception as exc:
+        return audio, False, f"[reverb] ML dereverb skipped due to runtime error: {exc}"
+
+
 def apply_reverb_match_to_wav(
     desired_wav: Path,
     target_wav: Path,
     processed_wav: Path,
     strength: float,
     mode: str,
-) -> ReverbTransfer:
+    export_variants: bool = True,
+    light_scale: float = 0.50,
+    mid_scale: float = 1.00,
+    prefer_ml_dereverb: bool = False,
+    ml_dereverb_model: Path | None = None,
+) -> Tuple[ReverbTransfer, Dict[str, Path]]:
     out_sr, out_audio = read_wav(processed_wav)
     desired_sr, desired_audio = read_wav(desired_wav)
     target_sr, target_audio = read_wav(target_wav)
@@ -920,15 +1126,53 @@ def apply_reverb_match_to_wav(
         strength=strength,
         mode=mode,
     )
-    if transfer.action == "none":
-        return transfer
+    suffix = processed_wav.suffix
+    base_stem = processed_wav.stem
+    variant_paths: Dict[str, Path] = {"mid": processed_wav}
+    if export_variants:
+        variant_paths = {
+            "off": processed_wav.with_name(f"{base_stem}_room_off{suffix}"),
+            "light": processed_wav.with_name(f"{base_stem}_room_light{suffix}"),
+            "mid": processed_wav.with_name(f"{base_stem}_room_mid{suffix}"),
+        }
 
-    if transfer.action == "add":
-        y = apply_synthetic_reverb(out_audio, sr=out_sr, rt60_s=transfer.rt60_s, wet_mix=transfer.wet_mix)
+    def _apply_room_variant(scale: float) -> np.ndarray:
+        if transfer.action == "none":
+            return out_audio.astype(np.float32, copy=True)
+        if transfer.action == "add":
+            wet = float(np.clip(transfer.wet_mix * scale, 0.0, 0.35))
+            return apply_convolution_reverb(
+                out_audio,
+                desired_mono=desired_mono,
+                sr=out_sr,
+                rt60_s=transfer.rt60_s,
+                wet_mix=wet,
+            )
+        amt = float(np.clip(transfer.dereverb_amount * scale, 0.0, 1.0))
+        if prefer_ml_dereverb:
+            y_ml, used, msg = maybe_run_ml_dereverb(
+                audio=out_audio,
+                amount=amt,
+                model_path=ml_dereverb_model,
+            )
+            if used:
+                print(msg)
+                return y_ml
+            print(msg)
+        return reduce_late_reverb(out_audio, sr=out_sr, amount=amt)
+
+    off_audio = out_audio.astype(np.float32, copy=True)
+    light_audio = _apply_room_variant(scale=float(np.clip(light_scale, 0.0, 1.0)))
+    mid_audio = _apply_room_variant(scale=float(np.clip(mid_scale, 0.0, 1.3)))
+
+    if export_variants:
+        write_wav(variant_paths["off"], out_sr, off_audio)
+        write_wav(variant_paths["light"], out_sr, light_audio)
+        write_wav(variant_paths["mid"], out_sr, mid_audio)
+        write_wav(processed_wav, out_sr, mid_audio)
     else:
-        y = reduce_late_reverb(out_audio, sr=out_sr, amount=transfer.dereverb_amount)
-    write_wav(processed_wav, out_sr, y)
-    return transfer
+        write_wav(processed_wav, out_sr, mid_audio)
+    return transfer, variant_paths
 
 
 def _format_float(v: float) -> str:
@@ -1043,6 +1287,34 @@ def build_common_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Strength multiplier for reverb processing (0..2, default 1).",
     )
+    match.add_argument(
+        "--room-export-variants",
+        action="store_true",
+        help="Export room variants (_room_off/_room_light/_room_mid) when room matching is enabled.",
+    )
+    match.add_argument(
+        "--room-light-scale",
+        type=float,
+        default=0.50,
+        help="Intensity scale for _room_light variant.",
+    )
+    match.add_argument(
+        "--room-mid-scale",
+        type=float,
+        default=1.00,
+        help="Intensity scale for _room_mid variant.",
+    )
+    match.add_argument(
+        "--prefer-ml-dereverb",
+        action="store_true",
+        help="Prefer ONNX ML dereverb model for room remove mode (fallback to heuristic).",
+    )
+    match.add_argument(
+        "--ml-dereverb-model",
+        type=Path,
+        default=Path("models/dereverb.onnx"),
+        help="Path to optional ONNX dereverb model.",
+    )
     add_common_curve_args(match)
     add_dynamics_args(match)
 
@@ -1116,44 +1388,55 @@ def main() -> int:
             max_freq=args.max_freq,
             filter_length=args.audacity_filter_length,
         )
+        post_paths = [args.out_wav]
         if args.match_reverb:
-            transfer = apply_reverb_match_to_wav(
+            transfer, variants = apply_reverb_match_to_wav(
                 desired_wav=args.desired_wav,
                 target_wav=args.target_wav,
                 processed_wav=args.out_wav,
                 strength=args.reverb_strength,
                 mode=args.reverb_mode,
+                export_variants=args.room_export_variants,
+                light_scale=args.room_light_scale,
+                mid_scale=args.room_mid_scale,
+                prefer_ml_dereverb=args.prefer_ml_dereverb,
+                ml_dereverb_model=args.ml_dereverb_model,
             )
             print(transfer.reason)
+            if args.room_export_variants:
+                post_paths = [variants["off"], variants["light"], variants["mid"]]
+                print(f"[room] variants: off={variants['off']}, light={variants['light']}, mid={variants['mid']}")
         if args.de_ess:
-            msg = apply_deesser_to_wav(
-                processed_wav=args.out_wav,
-                low_hz=args.de_ess_low_hz,
-                high_hz=args.de_ess_high_hz,
-                threshold_dbfs=args.de_ess_threshold_dbfs,
-                ratio=args.de_ess_ratio,
-                attack_ms=args.de_ess_attack_ms,
-                release_ms=args.de_ess_release_ms,
-                strength=args.de_ess_strength,
-            )
-            print(msg)
+            for p in post_paths:
+                msg = apply_deesser_to_wav(
+                    processed_wav=p,
+                    low_hz=args.de_ess_low_hz,
+                    high_hz=args.de_ess_high_hz,
+                    threshold_dbfs=args.de_ess_threshold_dbfs,
+                    ratio=args.de_ess_ratio,
+                    attack_ms=args.de_ess_attack_ms,
+                    release_ms=args.de_ess_release_ms,
+                    strength=args.de_ess_strength,
+                )
+                print(f"{msg} file={p}")
         if args.auto_level:
-            msg = apply_auto_level_to_wav(
-                processed_wav=args.out_wav,
-                target_dbfs=args.target_dbfs,
-                floor_dbfs=args.level_floor_dbfs,
-                max_boost_db=args.max_auto_boost_db,
-                max_cut_db=args.max_auto_cut_db,
-                auto_attack_ms=args.auto_attack_ms,
-                auto_release_ms=args.auto_release_ms,
-                compressor_threshold_dbfs=args.compressor_threshold_dbfs,
-                compressor_ratio=args.compressor_ratio,
-                compressor_attack_ms=args.compressor_attack_ms,
-                compressor_release_ms=args.compressor_release_ms,
-                limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
-                strength=args.dynamics_strength,
-            )
-            print(msg)
+            for p in post_paths:
+                msg = apply_auto_level_to_wav(
+                    processed_wav=p,
+                    target_dbfs=args.target_dbfs,
+                    floor_dbfs=args.level_floor_dbfs,
+                    max_boost_db=args.max_auto_boost_db,
+                    max_cut_db=args.max_auto_cut_db,
+                    auto_attack_ms=args.auto_attack_ms,
+                    auto_release_ms=args.auto_release_ms,
+                    compressor_threshold_dbfs=args.compressor_threshold_dbfs,
+                    compressor_ratio=args.compressor_ratio,
+                    compressor_attack_ms=args.compressor_attack_ms,
+                    compressor_release_ms=args.compressor_release_ms,
+                    limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
+                    strength=args.dynamics_strength,
+                )
+                print(f"{msg} file={p}")
         return 0
 
     if args.command == "curve":

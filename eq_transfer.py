@@ -316,6 +316,285 @@ def apply_curve_to_wav(
     write_wav(out_wav, sr, y)
 
 
+def _db_to_lin(db: np.ndarray | float) -> np.ndarray | float:
+    return 10.0 ** (np.asarray(db) / 20.0)
+
+
+def _lin_to_dbfs(lin: np.ndarray) -> np.ndarray:
+    return 20.0 * np.log10(np.maximum(lin, EPS))
+
+
+def _peak_dbfs(audio: np.ndarray) -> float:
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    return float(20.0 * np.log10(max(peak, EPS)))
+
+
+def _apply_time_varying_gain_db(audio: np.ndarray, sr: int, hop_s: float, gain_db_frames: np.ndarray) -> np.ndarray:
+    n = audio.shape[0]
+    if n == 0 or len(gain_db_frames) == 0:
+        return audio.astype(np.float32, copy=True)
+
+    frame_t = np.arange(len(gain_db_frames), dtype=np.float64) * hop_s
+    sample_t = np.arange(n, dtype=np.float64) / float(sr)
+    gain_db = np.interp(
+        sample_t,
+        frame_t,
+        gain_db_frames,
+        left=float(gain_db_frames[0]),
+        right=float(gain_db_frames[-1]),
+    )
+    gain_lin = _db_to_lin(gain_db).astype(np.float32)
+    return (audio * gain_lin[:, np.newaxis]).astype(np.float32)
+
+
+def apply_auto_level(
+    audio: np.ndarray,
+    sr: int,
+    target_dbfs: float,
+    floor_dbfs: float,
+    max_boost_db: float,
+    max_cut_db: float,
+    attack_ms: float,
+    release_ms: float,
+) -> np.ndarray:
+    mono = to_mono(audio).astype(np.float32, copy=False)
+    env, hop_s = _rms_envelope(mono, sr=sr, frame_ms=80.0, hop_ms=20.0)
+    levels_db = _lin_to_dbfs(env + EPS)
+
+    desired_gain_db = target_dbfs - levels_db
+    desired_gain_db = np.where(levels_db >= floor_dbfs, desired_gain_db, 0.0)
+    desired_gain_db = np.clip(desired_gain_db, -abs(max_cut_db), abs(max_boost_db))
+
+    tau_att = max(0.001, attack_ms / 1000.0)
+    tau_rel = max(0.001, release_ms / 1000.0)
+    alpha_att = float(np.exp(-hop_s / tau_att))
+    alpha_rel = float(np.exp(-hop_s / tau_rel))
+
+    smooth = np.zeros_like(desired_gain_db, dtype=np.float32)
+    current = 0.0
+    for i, target in enumerate(desired_gain_db):
+        # More attenuation should react faster, gain-up should react slower.
+        alpha = alpha_att if target < current else alpha_rel
+        current = (alpha * current) + ((1.0 - alpha) * float(target))
+        smooth[i] = current
+
+    return _apply_time_varying_gain_db(audio, sr=sr, hop_s=hop_s, gain_db_frames=smooth)
+
+
+def apply_rms_compressor(
+    audio: np.ndarray,
+    sr: int,
+    threshold_dbfs: float,
+    ratio: float,
+    attack_ms: float,
+    release_ms: float,
+) -> np.ndarray:
+    ratio = max(1.0, float(ratio))
+    mono = to_mono(audio).astype(np.float32, copy=False)
+    env, hop_s = _rms_envelope(mono, sr=sr, frame_ms=20.0, hop_ms=5.0)
+    level_db = _lin_to_dbfs(env + EPS)
+
+    over_db = np.maximum(0.0, level_db - threshold_dbfs)
+    reduction_db = over_db * (1.0 - (1.0 / ratio))
+    desired_gain_db = -reduction_db
+
+    tau_att = max(0.001, attack_ms / 1000.0)
+    tau_rel = max(0.001, release_ms / 1000.0)
+    alpha_att = float(np.exp(-hop_s / tau_att))
+    alpha_rel = float(np.exp(-hop_s / tau_rel))
+
+    smooth = np.zeros_like(desired_gain_db, dtype=np.float32)
+    current = 0.0
+    for i, target in enumerate(desired_gain_db):
+        # Compression gain reduction should clamp peaks quickly and recover more slowly.
+        alpha = alpha_att if target < current else alpha_rel
+        current = (alpha * current) + ((1.0 - alpha) * float(target))
+        smooth[i] = current
+
+    return _apply_time_varying_gain_db(audio, sr=sr, hop_s=hop_s, gain_db_frames=smooth)
+
+
+def apply_peak_limiter(audio: np.ndarray, ceiling_dbfs: float) -> np.ndarray:
+    ceiling_lin = float(_db_to_lin(float(ceiling_dbfs)))
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak <= ceiling_lin or peak <= EPS:
+        return audio.astype(np.float32, copy=True)
+    scale = ceiling_lin / peak
+    return (audio * scale).astype(np.float32)
+
+
+def apply_deesser(
+    audio: np.ndarray,
+    sr: int,
+    low_hz: float,
+    high_hz: float,
+    threshold_dbfs: float,
+    ratio: float,
+    attack_ms: float,
+    release_ms: float,
+    strength: float,
+) -> np.ndarray:
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0:
+        return audio.astype(np.float32, copy=True)
+
+    low_hz = float(max(1500.0, low_hz))
+    high_hz = float(max(low_hz + 500.0, high_hz))
+    ratio = max(1.0, float(ratio))
+
+    out = np.zeros_like(audio, dtype=np.float32)
+
+    for ch in range(audio.shape[1]):
+        x = audio[:, ch].astype(np.float32, copy=False)
+        band = _one_pole_lowpass(_one_pole_highpass(x, sr=sr, cutoff_hz=low_hz), sr=sr, cutoff_hz=high_hz)
+
+        env, hop_s = _rms_envelope(band, sr=sr, frame_ms=8.0, hop_ms=2.0)
+        level_db = _lin_to_dbfs(env + EPS)
+        over_db = np.maximum(0.0, level_db - threshold_dbfs)
+        reduction_db = over_db * (1.0 - (1.0 / ratio)) * strength
+        desired_gain_db = -reduction_db
+
+        tau_att = max(0.001, attack_ms / 1000.0)
+        tau_rel = max(0.001, release_ms / 1000.0)
+        alpha_att = float(np.exp(-hop_s / tau_att))
+        alpha_rel = float(np.exp(-hop_s / tau_rel))
+
+        smooth = np.zeros_like(desired_gain_db, dtype=np.float32)
+        current = 0.0
+        for i, target in enumerate(desired_gain_db):
+            alpha = alpha_att if target < current else alpha_rel
+            current = (alpha * current) + ((1.0 - alpha) * float(target))
+            smooth[i] = current
+
+        processed_band = _apply_time_varying_gain_db(
+            band[:, np.newaxis],
+            sr=sr,
+            hop_s=hop_s,
+            gain_db_frames=smooth,
+        )[:, 0]
+
+        # Split/recombine: only attenuate sibilance band, keep body of voice intact.
+        out[:, ch] = (x - band + processed_band).astype(np.float32)
+
+    return out
+
+
+def apply_deesser_to_wav(
+    processed_wav: Path,
+    low_hz: float,
+    high_hz: float,
+    threshold_dbfs: float,
+    ratio: float,
+    attack_ms: float,
+    release_ms: float,
+    strength: float,
+) -> str:
+    sr, x = read_wav(processed_wav)
+    y = apply_deesser(
+        audio=x,
+        sr=sr,
+        low_hz=low_hz,
+        high_hz=high_hz,
+        threshold_dbfs=threshold_dbfs,
+        ratio=ratio,
+        attack_ms=attack_ms,
+        release_ms=release_ms,
+        strength=strength,
+    )
+    write_wav(processed_wav, sr, y)
+    return (
+        "[deesser] applied: "
+        f"band={low_hz:.0f}-{high_hz:.0f} Hz, threshold={threshold_dbfs:.1f} dBFS, "
+        f"ratio={ratio:.2f}, strength={strength:.2f}."
+    )
+
+
+def apply_dynamics_chain(
+    audio: np.ndarray,
+    sr: int,
+    target_dbfs: float,
+    floor_dbfs: float,
+    max_boost_db: float,
+    max_cut_db: float,
+    auto_attack_ms: float,
+    auto_release_ms: float,
+    compressor_threshold_dbfs: float,
+    compressor_ratio: float,
+    compressor_attack_ms: float,
+    compressor_release_ms: float,
+    limiter_ceiling_dbfs: float,
+    strength: float,
+) -> np.ndarray:
+    strength = float(np.clip(strength, 0.0, 1.0))
+    dry = audio.astype(np.float32, copy=True)
+
+    y = apply_auto_level(
+        audio=dry,
+        sr=sr,
+        target_dbfs=target_dbfs,
+        floor_dbfs=floor_dbfs,
+        max_boost_db=max_boost_db,
+        max_cut_db=max_cut_db,
+        attack_ms=auto_attack_ms,
+        release_ms=auto_release_ms,
+    )
+    y = apply_rms_compressor(
+        audio=y,
+        sr=sr,
+        threshold_dbfs=compressor_threshold_dbfs,
+        ratio=compressor_ratio,
+        attack_ms=compressor_attack_ms,
+        release_ms=compressor_release_ms,
+    )
+    y = apply_peak_limiter(y, ceiling_dbfs=limiter_ceiling_dbfs)
+
+    if strength < 1.0:
+        y = ((1.0 - strength) * dry) + (strength * y)
+    return y.astype(np.float32)
+
+
+def apply_auto_level_to_wav(
+    processed_wav: Path,
+    target_dbfs: float,
+    floor_dbfs: float,
+    max_boost_db: float,
+    max_cut_db: float,
+    auto_attack_ms: float,
+    auto_release_ms: float,
+    compressor_threshold_dbfs: float,
+    compressor_ratio: float,
+    compressor_attack_ms: float,
+    compressor_release_ms: float,
+    limiter_ceiling_dbfs: float,
+    strength: float,
+) -> str:
+    sr, x = read_wav(processed_wav)
+    before_peak = _peak_dbfs(x)
+    y = apply_dynamics_chain(
+        audio=x,
+        sr=sr,
+        target_dbfs=target_dbfs,
+        floor_dbfs=floor_dbfs,
+        max_boost_db=max_boost_db,
+        max_cut_db=max_cut_db,
+        auto_attack_ms=auto_attack_ms,
+        auto_release_ms=auto_release_ms,
+        compressor_threshold_dbfs=compressor_threshold_dbfs,
+        compressor_ratio=compressor_ratio,
+        compressor_attack_ms=compressor_attack_ms,
+        compressor_release_ms=compressor_release_ms,
+        limiter_ceiling_dbfs=limiter_ceiling_dbfs,
+        strength=strength,
+    )
+    after_peak = _peak_dbfs(y)
+    write_wav(processed_wav, sr, y)
+    return (
+        "[autolevel] applied: "
+        f"target={target_dbfs:.1f} dBFS, ceiling={limiter_ceiling_dbfs:.1f} dBFS, "
+        f"peak {before_peak:.1f} -> {after_peak:.1f} dBFS."
+    )
+
+
 def _resample_linear(x: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
     if src_sr == dst_sr or len(x) == 0:
         return x.astype(np.float32, copy=False)
@@ -703,6 +982,43 @@ def build_common_parser() -> argparse.ArgumentParser:
         sp.add_argument("--audacity-points", type=int, default=180, help="Audacity preset point count (max 200).")
         sp.add_argument("--audacity-filter-length", type=int, default=8191, help="FilterLength field for Audacity preset.")
 
+    def add_dynamics_args(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--auto-level",
+            action="store_true",
+            help="Apply dynamic loudness correction (auto gain + compressor + limiter).",
+        )
+        sp.add_argument("--target-dbfs", type=float, default=-6.0, help="Auto-level loudness target in dBFS.")
+        sp.add_argument("--level-floor-dbfs", type=float, default=-42.0, help="Do not add gain below this level.")
+        sp.add_argument("--max-auto-boost-db", type=float, default=12.0, help="Maximum auto-gain boost.")
+        sp.add_argument("--max-auto-cut-db", type=float, default=12.0, help="Maximum auto-gain attenuation.")
+        sp.add_argument("--auto-attack-ms", type=float, default=35.0, help="Auto-gain attack (ms).")
+        sp.add_argument("--auto-release-ms", type=float, default=450.0, help="Auto-gain release (ms).")
+        sp.add_argument(
+            "--compressor-threshold-dbfs",
+            type=float,
+            default=-12.0,
+            help="Compressor threshold in dBFS.",
+        )
+        sp.add_argument("--compressor-ratio", type=float, default=2.2, help="Compressor ratio.")
+        sp.add_argument("--compressor-attack-ms", type=float, default=12.0, help="Compressor attack (ms).")
+        sp.add_argument("--compressor-release-ms", type=float, default=120.0, help="Compressor release (ms).")
+        sp.add_argument("--limiter-ceiling-dbfs", type=float, default=-3.0, help="Peak limiter ceiling in dBFS.")
+        sp.add_argument(
+            "--dynamics-strength",
+            type=float,
+            default=1.0,
+            help="Blend dynamics processing, from 0..1.",
+        )
+        sp.add_argument("--de-ess", action="store_true", help="Apply de-esser to reduce sibilance after EQ.")
+        sp.add_argument("--de-ess-low-hz", type=float, default=4500.0, help="De-esser low crossover frequency.")
+        sp.add_argument("--de-ess-high-hz", type=float, default=10000.0, help="De-esser high crossover frequency.")
+        sp.add_argument("--de-ess-threshold-dbfs", type=float, default=-30.0, help="De-esser threshold in dBFS.")
+        sp.add_argument("--de-ess-ratio", type=float, default=3.0, help="De-esser compression ratio.")
+        sp.add_argument("--de-ess-attack-ms", type=float, default=5.0, help="De-esser attack (ms).")
+        sp.add_argument("--de-ess-release-ms", type=float, default=90.0, help="De-esser release (ms).")
+        sp.add_argument("--de-ess-strength", type=float, default=0.70, help="De-esser strength from 0..1.")
+
     match = sub.add_parser("match", help="Build curve from desired+target WAV and apply to target WAV.")
     match.add_argument("--desired-wav", type=Path, required=True)
     match.add_argument("--target-wav", type=Path, required=True)
@@ -728,6 +1044,7 @@ def build_common_parser() -> argparse.ArgumentParser:
         help="Strength multiplier for reverb processing (0..2, default 1).",
     )
     add_common_curve_args(match)
+    add_dynamics_args(match)
 
     curve = sub.add_parser("curve", help="Build curve from two exported spectrum text files.")
     curve.add_argument("--desired-spectrum", type=Path, required=True)
@@ -741,6 +1058,7 @@ def build_common_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("--n-fft", type=int, default=4096)
     apply_p.add_argument("--hop", type=int, default=1024)
     apply_p.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix, 0..1")
+    add_dynamics_args(apply_p)
 
     return p
 
@@ -807,6 +1125,35 @@ def main() -> int:
                 mode=args.reverb_mode,
             )
             print(transfer.reason)
+        if args.de_ess:
+            msg = apply_deesser_to_wav(
+                processed_wav=args.out_wav,
+                low_hz=args.de_ess_low_hz,
+                high_hz=args.de_ess_high_hz,
+                threshold_dbfs=args.de_ess_threshold_dbfs,
+                ratio=args.de_ess_ratio,
+                attack_ms=args.de_ess_attack_ms,
+                release_ms=args.de_ess_release_ms,
+                strength=args.de_ess_strength,
+            )
+            print(msg)
+        if args.auto_level:
+            msg = apply_auto_level_to_wav(
+                processed_wav=args.out_wav,
+                target_dbfs=args.target_dbfs,
+                floor_dbfs=args.level_floor_dbfs,
+                max_boost_db=args.max_auto_boost_db,
+                max_cut_db=args.max_auto_cut_db,
+                auto_attack_ms=args.auto_attack_ms,
+                auto_release_ms=args.auto_release_ms,
+                compressor_threshold_dbfs=args.compressor_threshold_dbfs,
+                compressor_ratio=args.compressor_ratio,
+                compressor_attack_ms=args.compressor_attack_ms,
+                compressor_release_ms=args.compressor_release_ms,
+                limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
+                strength=args.dynamics_strength,
+            )
+            print(msg)
         return 0
 
     if args.command == "curve":
@@ -840,6 +1187,35 @@ def main() -> int:
             hop=args.hop,
             mix=args.mix,
         )
+        if args.de_ess:
+            msg = apply_deesser_to_wav(
+                processed_wav=args.out_wav,
+                low_hz=args.de_ess_low_hz,
+                high_hz=args.de_ess_high_hz,
+                threshold_dbfs=args.de_ess_threshold_dbfs,
+                ratio=args.de_ess_ratio,
+                attack_ms=args.de_ess_attack_ms,
+                release_ms=args.de_ess_release_ms,
+                strength=args.de_ess_strength,
+            )
+            print(msg)
+        if args.auto_level:
+            msg = apply_auto_level_to_wav(
+                processed_wav=args.out_wav,
+                target_dbfs=args.target_dbfs,
+                floor_dbfs=args.level_floor_dbfs,
+                max_boost_db=args.max_auto_boost_db,
+                max_cut_db=args.max_auto_cut_db,
+                auto_attack_ms=args.auto_attack_ms,
+                auto_release_ms=args.auto_release_ms,
+                compressor_threshold_dbfs=args.compressor_threshold_dbfs,
+                compressor_ratio=args.compressor_ratio,
+                compressor_attack_ms=args.compressor_attack_ms,
+                compressor_release_ms=args.compressor_release_ms,
+                limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
+                strength=args.dynamics_strength,
+            )
+            print(msg)
         return 0
 
     raise RuntimeError(f"Unhandled command: {args.command}")

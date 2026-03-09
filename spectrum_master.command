@@ -56,6 +56,28 @@ ask_file_path() {
   normalize_input_path "$value"
 }
 
+ensure_python_version() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 not found. Please install Python 3.9 or newer."
+    wait_for_enter
+    return 1
+  fi
+
+  if ! python3 - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 9) else 1)
+PY
+  then
+    echo "Python 3.9+ is required."
+    echo -n "Detected: "
+    python3 --version
+    wait_for_enter
+    return 1
+  fi
+
+  return 0
+}
+
 ensure_python_env() {
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     echo "Creating local Python environment in $VENV_DIR ..."
@@ -265,6 +287,9 @@ run_spectrum_master() {
     return
   fi
 
+  if ! ensure_python_version; then
+    return
+  fi
   ensure_python_env
   ea="$(lower_ext "$a")"
   eb="$(lower_ext "$b")"

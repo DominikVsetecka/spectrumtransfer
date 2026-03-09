@@ -35,6 +35,8 @@ Use only this launcher:
 ./spectrum_master.command
 ```
 
+The launcher validates `python3` and requires version `>= 3.9` before creating `.venv` or installing dependencies.
+
 Menu:
 
 1. `Spectrum Master (EQ + Auto-Level + optional De-Esser)`

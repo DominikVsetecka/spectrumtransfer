@@ -138,6 +138,30 @@ remux_target_with_wav() {
     "$out_mp4"
 }
 
+run_match_command() {
+  local desired_wav="$1"
+  local target_wav="$2"
+  local out_wav="$3"
+  local curve_csv="$4"
+  local audacity_preset="$5"
+  local -a cmd
+
+  cmd=(
+    "$PY_BIN" "$PY_SCRIPT" match
+    --desired-wav "$desired_wav"
+    --target-wav "$target_wav"
+    --out-wav "$out_wav"
+    --curve-csv "$curve_csv"
+    --audacity-preset "$audacity_preset"
+  )
+
+  if (( ${#REVERB_ARGS[@]} > 0 )); then
+    cmd+=("${REVERB_ARGS[@]}")
+  fi
+
+  "${cmd[@]}"
+}
+
 if [[ $# -eq 2 ]]; then
   A="$1"
   B="$2"
@@ -184,13 +208,7 @@ if [[ "$EA" == "wav" && "$EB" == "wav" ]]; then
 
   echo "Mode: match (desired.wav + target.wav)"
   ask_reverb_match
-  if ! "$PY_BIN" "$PY_SCRIPT" match \
-    --desired-wav "$A" \
-    --target-wav "$B" \
-    --out-wav "$OUT_WAV" \
-    --curve-csv "$OUT_CSV" \
-    --audacity-preset "$OUT_PRESET" \
-    "${REVERB_ARGS[@]}"; then
+  if ! run_match_command "$A" "$B" "$OUT_WAV" "$OUT_CSV" "$OUT_PRESET"; then
     echo "EQ match failed."
     wait_and_exit 1
   fi
@@ -232,13 +250,7 @@ fi
 
   echo "Matching EQ to desired.wav ..."
   ask_reverb_match
-  if ! "$PY_BIN" "$PY_SCRIPT" match \
-    --desired-wav "$DESIRED_WAV" \
-    --target-wav "$EXTRACT_WAV" \
-    --out-wav "$MATCHED_WAV" \
-    --curve-csv "$OUT_CSV" \
-    --audacity-preset "$OUT_PRESET" \
-    "${REVERB_ARGS[@]}"; then
+  if ! run_match_command "$DESIRED_WAV" "$EXTRACT_WAV" "$MATCHED_WAV" "$OUT_CSV" "$OUT_PRESET"; then
     echo "EQ match on extracted audio track failed."
     wait_and_exit 1
   fi
@@ -289,13 +301,7 @@ if [[ "$EA" == "mp4" && "$EB" == "mp4" ]]; then
 
   echo "Matching target audio to desired audio ..."
   ask_reverb_match
-  if ! "$PY_BIN" "$PY_SCRIPT" match \
-    --desired-wav "$DESIRED_WAV" \
-    --target-wav "$EXTRACT_WAV" \
-    --out-wav "$MATCHED_WAV" \
-    --curve-csv "$OUT_CSV" \
-    --audacity-preset "$OUT_PRESET" \
-    "${REVERB_ARGS[@]}"; then
+  if ! run_match_command "$DESIRED_WAV" "$EXTRACT_WAV" "$MATCHED_WAV" "$OUT_CSV" "$OUT_PRESET"; then
     echo "EQ match for extracted audio tracks failed."
     wait_and_exit 1
   fi

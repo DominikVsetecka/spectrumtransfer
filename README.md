@@ -15,6 +15,11 @@ Core idea:
 - MP4 audio extraction/remux workflows via the master command
 - Single user-facing launcher: `spectrumtransfer.command`
 
+## Platform Notes
+
+- `spectrumtransfer.command` is a macOS launcher (Terminal `.command` file).
+- `spectrumtransfer.py` is platform-independent Python and can run on macOS, Linux, and Windows (with dependencies installed).
+
 ## Requirements
 
 - Python 3.9+
@@ -56,7 +61,7 @@ Menu:
 ### 1) Match desired WAV to target WAV
 
 ```bash
-python3 eq_transfer.py match \
+python3 spectrumtransfer.py match \
   --desired-wav desired_reference.wav \
   --target-wav vocal_to_fix.wav \
   --out-wav vocal_matched.wav \
@@ -72,7 +77,7 @@ Useful flags:
 ### 2) Build curve from Audacity spectrum exports
 
 ```bash
-python3 eq_transfer.py curve \
+python3 spectrumtransfer.py curve \
   --desired-spectrum desired_spectrum.txt \
   --target-spectrum target_spectrum.txt \
   --curve-csv eq_curve.csv \
@@ -82,7 +87,7 @@ python3 eq_transfer.py curve \
 ### 3) Apply saved curve to WAV
 
 ```bash
-python3 eq_transfer.py apply \
+python3 spectrumtransfer.py apply \
   --curve-csv eq_curve.csv \
   --target-wav vocal_to_fix.wav \
   --out-wav vocal_matched.wav

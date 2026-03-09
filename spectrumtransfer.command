@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PY_SCRIPT="$SCRIPT_DIR/eq_transfer.py"
+PY_SCRIPT="$SCRIPT_DIR/spectrumtransfer.py"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 VENV_DIR="$SCRIPT_DIR/.venv"
 PY_BIN=""

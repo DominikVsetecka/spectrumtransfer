@@ -148,6 +148,88 @@ def clamp_curve(gain_db: np.ndarray, max_cut_db: float, max_boost_db: float) -> 
     return np.clip(gain_db, lo, hi)
 
 
+def build_high_cut_curve(
+    freqs_hz: np.ndarray,
+    cutoff_hz: float,
+    gain_db: float,
+    q: float,
+) -> np.ndarray:
+    if gain_db == 0.0:
+        return np.zeros_like(freqs_hz, dtype=np.float64)
+
+    safe_freqs = np.maximum(freqs_hz.astype(np.float64), 1.0)
+    cutoff_hz = float(max(20.0, cutoff_hz))
+    q = float(max(0.1, q))
+
+    log_f = np.log2(safe_freqs)
+    log_cutoff = np.log2(cutoff_hz)
+    width_oct = max(0.03, 0.30 / q)
+    slope = 1.0 / (1.0 + np.exp(-(log_f - log_cutoff) / width_oct))
+    return gain_db * slope
+
+
+def build_notch_curve(
+    freqs_hz: np.ndarray,
+    center_hz: float,
+    gain_db: float,
+    q: float,
+) -> np.ndarray:
+    if gain_db == 0.0:
+        return np.zeros_like(freqs_hz, dtype=np.float64)
+
+    safe_freqs = np.maximum(freqs_hz.astype(np.float64), 1.0)
+    center_hz = float(max(20.0, center_hz))
+    q = float(max(0.1, q))
+
+    log_f = np.log2(safe_freqs)
+    log_center = np.log2(center_hz)
+    sigma_oct = max(0.02, 0.50 / q)
+    return gain_db * np.exp(-0.5 * ((log_f - log_center) / sigma_oct) ** 2)
+
+
+def add_whine_reduction_to_curve(
+    curve: Curve,
+    high_cut_enabled: bool,
+    high_cut_freq_hz: float,
+    high_cut_gain_db: float,
+    high_cut_q: float,
+    notch_freqs_hz: Iterable[float],
+    notch_gain_db: float,
+    notch_q: float,
+) -> Curve:
+    extra = np.zeros_like(curve.gain_db, dtype=np.float64)
+
+    if high_cut_enabled:
+        extra += build_high_cut_curve(
+            freqs_hz=curve.freqs_hz,
+            cutoff_hz=high_cut_freq_hz,
+            gain_db=high_cut_gain_db,
+            q=high_cut_q,
+        )
+
+    for freq_hz in notch_freqs_hz:
+        if freq_hz <= 0:
+            continue
+        extra += build_notch_curve(
+            freqs_hz=curve.freqs_hz,
+            center_hz=freq_hz,
+            gain_db=notch_gain_db,
+            q=notch_q,
+        )
+
+    if not np.any(np.abs(extra) > 1e-9):
+        return curve
+
+    return Curve(curve.freqs_hz.copy(), (curve.gain_db.astype(np.float64) + extra).astype(np.float64))
+
+
+def build_flat_curve() -> Curve:
+    return Curve(
+        freqs_hz=np.asarray([1.0, 40000.0], dtype=np.float64),
+        gain_db=np.asarray([0.0, 0.0], dtype=np.float64),
+    )
+
+
 def build_delta_curve_from_audio(
     desired_wav: Path,
     target_wav: Path,
@@ -1215,6 +1297,50 @@ def build_common_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
+    def add_whine_args(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--whine-high-cut",
+            action="store_true",
+            help="Add an extra upper-band cut for electrical whine reduction.",
+        )
+        sp.add_argument(
+            "--whine-high-cut-freq-hz",
+            type=float,
+            default=17400.0,
+            help="Center/transition frequency of the additional upper-band cut.",
+        )
+        sp.add_argument(
+            "--whine-high-cut-gain-db",
+            type=float,
+            default=-30.0,
+            help="Gain of the additional upper-band cut.",
+        )
+        sp.add_argument(
+            "--whine-high-cut-q",
+            type=float,
+            default=1.2,
+            help="Q / steepness of the additional upper-band cut.",
+        )
+        sp.add_argument(
+            "--whine-notch-hz",
+            type=float,
+            nargs="*",
+            default=[],
+            help="Up to 3 optional notch frequencies for narrow electrical whine tones.",
+        )
+        sp.add_argument(
+            "--whine-notch-gain-db",
+            type=float,
+            default=-18.0,
+            help="Gain for optional whine notch cuts.",
+        )
+        sp.add_argument(
+            "--whine-notch-q",
+            type=float,
+            default=8.0,
+            help="Q for optional whine notch cuts.",
+        )
+
     def add_common_curve_args(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--smooth-octaves", type=float, default=0.20, help="Log-frequency smoothing width in octaves.")
         sp.add_argument("--min-freq", type=float, default=60.0, help="Only apply matching from this frequency up.")
@@ -1225,6 +1351,7 @@ def build_common_parser() -> argparse.ArgumentParser:
         sp.add_argument("--audacity-preset", type=Path, help="Optional Audacity Filter Curve EQ preset text output.")
         sp.add_argument("--audacity-points", type=int, default=180, help="Audacity preset point count (max 200).")
         sp.add_argument("--audacity-filter-length", type=int, default=8191, help="FilterLength field for Audacity preset.")
+        add_whine_args(sp)
 
     def add_dynamics_args(sp: argparse.ArgumentParser) -> None:
         sp.add_argument(
@@ -1285,7 +1412,16 @@ def build_common_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("--n-fft", type=int, default=4096)
     apply_p.add_argument("--hop", type=int, default=1024)
     apply_p.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix, 0..1")
+    add_whine_args(apply_p)
     add_dynamics_args(apply_p)
+
+    whine = sub.add_parser("whine", help="Apply only electrical whine reduction to a target WAV.")
+    whine.add_argument("--target-wav", type=Path, required=True)
+    whine.add_argument("--out-wav", type=Path, required=True)
+    whine.add_argument("--n-fft", type=int, default=4096)
+    whine.add_argument("--hop", type=int, default=1024)
+    whine.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix, 0..1")
+    add_whine_args(whine)
 
     return p
 
@@ -1325,6 +1461,16 @@ def main() -> int:
             max_freq=args.max_freq,
             max_cut_db=args.max_cut_db,
             max_boost_db=args.max_boost_db,
+        )
+        curve = add_whine_reduction_to_curve(
+            curve=curve,
+            high_cut_enabled=args.whine_high_cut,
+            high_cut_freq_hz=args.whine_high_cut_freq_hz,
+            high_cut_gain_db=args.whine_high_cut_gain_db,
+            high_cut_q=args.whine_high_cut_q,
+            notch_freqs_hz=args.whine_notch_hz[:3],
+            notch_gain_db=args.whine_notch_gain_db,
+            notch_q=args.whine_notch_q,
         )
         save_curve_csv(args.curve_csv, curve)
         apply_curve_to_wav(
@@ -1387,6 +1533,16 @@ def main() -> int:
             max_cut_db=args.max_cut_db,
             max_boost_db=args.max_boost_db,
         )
+        curve = add_whine_reduction_to_curve(
+            curve=curve,
+            high_cut_enabled=args.whine_high_cut,
+            high_cut_freq_hz=args.whine_high_cut_freq_hz,
+            high_cut_gain_db=args.whine_high_cut_gain_db,
+            high_cut_q=args.whine_high_cut_q,
+            notch_freqs_hz=args.whine_notch_hz[:3],
+            notch_gain_db=args.whine_notch_gain_db,
+            notch_q=args.whine_notch_q,
+        )
         save_curve_csv(args.curve_csv, curve)
         maybe_write_audacity_preset(
             path=args.audacity_preset,
@@ -1400,6 +1556,16 @@ def main() -> int:
 
     if args.command == "apply":
         curve = load_curve_csv(args.curve_csv)
+        curve = add_whine_reduction_to_curve(
+            curve=curve,
+            high_cut_enabled=args.whine_high_cut,
+            high_cut_freq_hz=args.whine_high_cut_freq_hz,
+            high_cut_gain_db=args.whine_high_cut_gain_db,
+            high_cut_q=args.whine_high_cut_q,
+            notch_freqs_hz=args.whine_notch_hz[:3],
+            notch_gain_db=args.whine_notch_gain_db,
+            notch_q=args.whine_notch_q,
+        )
         apply_curve_to_wav(
             target_wav=args.target_wav,
             out_wav=args.out_wav,
@@ -1437,6 +1603,27 @@ def main() -> int:
                 strength=args.dynamics_strength,
             )
             print(msg)
+        return 0
+
+    if args.command == "whine":
+        curve = add_whine_reduction_to_curve(
+            curve=build_flat_curve(),
+            high_cut_enabled=args.whine_high_cut,
+            high_cut_freq_hz=args.whine_high_cut_freq_hz,
+            high_cut_gain_db=args.whine_high_cut_gain_db,
+            high_cut_q=args.whine_high_cut_q,
+            notch_freqs_hz=args.whine_notch_hz[:3],
+            notch_gain_db=args.whine_notch_gain_db,
+            notch_q=args.whine_notch_q,
+        )
+        apply_curve_to_wav(
+            target_wav=args.target_wav,
+            out_wav=args.out_wav,
+            curve=curve,
+            n_fft=args.n_fft,
+            hop=args.hop,
+            mix=args.mix,
+        )
         return 0
 
     raise RuntimeError(f"Unhandled command: {args.command}")

@@ -8,6 +8,7 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 PY_BIN=""
 DYNAMICS_ARGS=()
 DEESS_ARGS=()
+WHINE_ARGS=()
 
 normalize_input_path() {
   local raw="$1"
@@ -231,6 +232,49 @@ ask_deesser_profile() {
   esac
 }
 
+ask_whine_profile() {
+  local ans=""
+  echo
+  echo "Electrical whine reduction (high cut + optional notch filters):"
+  echo "  0) off"
+  echo "  1) gentle (high cut at 17.4 kHz + 1 notch)"
+  echo "  2) strong (high cut at 17.4 kHz + 3 notches)"
+  printf "Choose [0/1/2] (default 2): "
+  IFS= read -r ans
+  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+
+  case "$ans" in
+    "0"|"off")
+      WHINE_ARGS=()
+      echo "Whine reduction: off"
+      ;;
+    "1"|"gentle")
+      WHINE_ARGS=(
+        --whine-high-cut
+        --whine-high-cut-freq-hz 17400
+        --whine-high-cut-gain-db -30.0
+        --whine-high-cut-q 1.2
+        --whine-notch-hz 15600
+        --whine-notch-gain-db -14.0
+        --whine-notch-q 9.0
+      )
+      echo "Whine reduction: gentle"
+      ;;
+    *)
+      WHINE_ARGS=(
+        --whine-high-cut
+        --whine-high-cut-freq-hz 17400
+        --whine-high-cut-gain-db -30.0
+        --whine-high-cut-q 1.2
+        --whine-notch-hz 15600 16800 18100
+        --whine-notch-gain-db -18.0
+        --whine-notch-q 10.0
+      )
+      echo "Whine reduction: strong"
+      ;;
+  esac
+}
+
 run_match_command() {
   local desired_wav="$1"
   local target_wav="$2"
@@ -253,6 +297,9 @@ run_match_command() {
   fi
   if (( ${#DEESS_ARGS[@]} > 0 )); then
     cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#WHINE_ARGS[@]} > 0 )); then
+    cmd+=("${WHINE_ARGS[@]}")
   fi
 
   "${cmd[@]}"
@@ -306,6 +353,7 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
+    ask_whine_profile
 
     if run_match_command "$a" "$b" "$out_wav" "$out_csv" "$out_preset"; then
       echo "Output WAV: $out_wav"
@@ -326,11 +374,14 @@ run_spectrum_master() {
     out_csv="$target_dir/${target_base}_curve_${ts}.csv"
     out_preset="$target_dir/${target_base}_audacity_${ts}.txt"
 
+    ask_whine_profile
+
     if "$PY_BIN" "$PY_SCRIPT" curve \
       --desired-spectrum "$a" \
       --target-spectrum "$b" \
       --curve-csv "$out_csv" \
-      --audacity-preset "$out_preset"; then
+      --audacity-preset "$out_preset" \
+      "${WHINE_ARGS[@]}"; then
       echo "Curve CSV:  $out_csv"
       echo "Preset TXT: $out_preset"
     else
@@ -358,13 +409,15 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
+    ask_whine_profile
 
     if "$PY_BIN" "$PY_SCRIPT" apply \
       --curve-csv "$curve" \
       --target-wav "$target" \
       --out-wav "$out_wav" \
       "${DYNAMICS_ARGS[@]}" \
-      "${DEESS_ARGS[@]}"; then
+      "${DEESS_ARGS[@]}" \
+      "${WHINE_ARGS[@]}"; then
       echo "Output WAV: $out_wav"
     else
       echo "Apply failed."
@@ -402,6 +455,7 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
+    ask_whine_profile
 
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to MP4 ..."
@@ -444,6 +498,7 @@ run_spectrum_master() {
 
     ask_dynamics_profile
     ask_deesser_profile
+    ask_whine_profile
 
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to target MP4 ..."
@@ -491,6 +546,82 @@ run_mp4_to_wav() {
   wait_for_enter
 }
 
+run_whine_only() {
+  local in_file ext ts target_dir base out_wav out_mp4 extract_wav
+
+  echo
+  in_file="$(ask_file_path 'WAV or MP4 file: ')"
+  if [[ -z "$in_file" || ! -f "$in_file" ]]; then
+    echo "Valid WAV or MP4 path required."
+    wait_for_enter
+    return
+  fi
+
+  if ! ensure_python_version; then
+    return
+  fi
+  ensure_python_env
+
+  ext="$(lower_ext "$in_file")"
+  ts="$(stamp)"
+  target_dir="$(cd "$(dirname "$in_file")" && pwd)"
+
+  ask_whine_profile
+
+  if [[ ${#WHINE_ARGS[@]} -eq 0 ]]; then
+    echo "Whine reduction is off, nothing to do."
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ext" == "wav" ]]; then
+    base="$(basename "$in_file" .wav)"
+    out_wav="$target_dir/${base}_whine_reduced_${ts}.wav"
+
+    if "$PY_BIN" "$PY_SCRIPT" whine \
+      --target-wav "$in_file" \
+      --out-wav "$out_wav" \
+      "${WHINE_ARGS[@]}"; then
+      echo "Output WAV: $out_wav"
+    else
+      echo "Whine-only processing failed."
+    fi
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ext" == "mp4" ]]; then
+    if ! ensure_ffmpeg; then
+      return
+    fi
+
+    base="$(basename "$in_file" .mp4)"
+    extract_wav="$target_dir/${base}_audio_original_${ts}.wav"
+    out_wav="$target_dir/${base}_audio_whine_reduced_${ts}.wav"
+    out_mp4="$target_dir/${base}_whine_reduced_${ts}.mp4"
+
+    echo "Extracting audio from MP4 ..."
+    extract_mp4_audio_wav "$in_file" "$extract_wav"
+
+    if "$PY_BIN" "$PY_SCRIPT" whine \
+      --target-wav "$extract_wav" \
+      --out-wav "$out_wav" \
+      "${WHINE_ARGS[@]}"; then
+      echo "Writing processed audio back to MP4 ..."
+      remux_target_with_wav "$in_file" "$out_wav" "$out_mp4"
+      echo "Output MP4: $out_mp4"
+      echo "Output WAV: $out_wav"
+    else
+      echo "Whine-only processing failed."
+    fi
+    wait_for_enter
+    return
+  fi
+
+  echo "Only .wav and .mp4 are supported here."
+  wait_for_enter
+}
+
 if [[ ! -f "$PY_SCRIPT" ]]; then
   echo "Missing $PY_SCRIPT"
   exit 1
@@ -501,10 +632,11 @@ while true; do
   echo "Spectrum Transfer - Master Command"
   echo "----------------------------------"
   echo "1) Spectrum Master (EQ + Auto-Level + optional De-Esser)"
-  echo "2) MP4 -> WAV"
-  echo "3) Exit"
+  echo "2) Whine Only (WAV/MP4)"
+  echo "3) MP4 -> WAV"
+  echo "4) Exit"
   echo
-  printf "Choose [1/2/3]: "
+  printf "Choose [1/2/3/4]: "
   IFS= read -r choice
 
   case "${choice:-}" in
@@ -512,9 +644,12 @@ while true; do
       run_spectrum_master
       ;;
     2)
-      run_mp4_to_wav
+      run_whine_only
       ;;
     3)
+      run_mp4_to_wav
+      ;;
+    4)
       echo "Bye."
       exit 0
       ;;

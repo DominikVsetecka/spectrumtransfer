@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-09
+
 ### Added
 - Electrical whine reduction with configurable upper-band cut and up to three narrow notch frequencies.
 - Dedicated `whine` processing mode for applying only whine removal to a WAV without spectrum matching or post-processing.

@@ -2,6 +2,12 @@
 
 Transfer vocal tone from a reference recording to a target recording, or remove high-frequency electrical whine from WAV and MP4 audio.
 
+This tool is useful when recordings are technically usable, but do not sound consistent enough for delivery. A typical case is a studio or office video production where one take was recorded with a cleaner mic chain, better placement, or a more controlled room, while another take sounds thinner, duller, harsher, or slightly off because of a different camera mic, lav setup, gain staging, or speaker position.
+
+Instead of rebuilding the sound by hand every time, `spectrumtransfer` can derive a static tonal correction from a good reference and apply it to the weaker recording. That makes it practical for interview shoots, talking-head videos, podcast video sessions, training content, social snippets, and other post-production workflows where multiple recordings should feel like they came from the same setup.
+
+It also helps in the common case where the voice is basically fine, but the recording contains a narrow high-frequency electrical whine from studio gear, screens, power supplies, lighting, or camera electronics. In that situation you can use the dedicated whine-only mode to clean the noise without changing the rest of the signal more than necessary.
+
 Core idea:
 `EQ delta = desired_spectrum_dB - target_spectrum_dB`
 

@@ -6,6 +6,16 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+- Electrical whine reduction with configurable upper-band cut and up to three narrow notch frequencies.
+- Dedicated `whine` processing mode for applying only whine removal to a WAV without spectrum matching or post-processing.
+- Launcher support for `Whine Only (WAV/MP4)` including MP4 extract/process/remux workflow.
+
+### Changed
+- Extended `match`, `curve`, and `apply` flows so whine reduction can be layered onto existing EQ processing.
+
+## [0.1.1] - 2026-03-09
+
 ### Changed
 - Unified launcher workflow into a single macOS entrypoint: `spectrumtransfer.command`.
 - Renamed core script from `eq_transfer.py` to `spectrumtransfer.py` and updated launcher/README references.

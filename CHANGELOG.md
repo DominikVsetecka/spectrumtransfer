@@ -13,6 +13,9 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 - `fix` CLI mode for applying whine reduction, auto-level, and optional de-esser without EQ transfer.
 - Folder batch summaries now list failed files and offer a retry pass for only those files.
 
+### Fixed
+- Prevented `ffmpeg` from consuming the batch file list from stdin, which could truncate subsequent paths and cause false "No such file or directory" errors.
+
 ### Removed
 - Direct launcher menu entry for `MP4 -> WAV`.
 

@@ -69,6 +69,8 @@ Folder processing is non-recursive and skips generated output files from previou
 
 If a folder batch has failed files, the launcher prints the affected file paths at the end and asks whether only those failed files should be retried.
 
+Batch MP4 processing runs `ffmpeg` with stdin disabled so ffmpeg cannot consume the internal file list while a folder is being processed.
+
 Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, de-esser gentle, Spectrum Master off, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
 
 ## CLI (Advanced)

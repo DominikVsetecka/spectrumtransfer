@@ -192,7 +192,7 @@ ensure_ffmpeg() {
 extract_mp4_audio_wav() {
   local in_mp4="$1"
   local out_wav="$2"
-  ffmpeg -y \
+  ffmpeg -nostdin -y \
     -i "$in_mp4" \
     -vn \
     -map "0:a:0" \
@@ -206,7 +206,7 @@ remux_target_with_wav() {
   local in_mp4="$1"
   local in_wav="$2"
   local out_mp4="$3"
-  ffmpeg -y \
+  ffmpeg -nostdin -y \
     -i "$in_mp4" \
     -i "$in_wav" \
     -map "0:v:0?" \

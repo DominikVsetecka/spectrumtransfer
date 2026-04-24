@@ -7,7 +7,7 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 ## [Unreleased]
 
 ### Added
-- Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, de-esser, whine, spectrum matching, peak normalize, and peak ceiling.
+- Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, spectrum matching, de-esser, peak normalize, peak ceiling, and whine.
 - Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
 - `pipeline` CLI mode for applying the same ordered processing chain to WAV files.
 - `fix` CLI mode for applying whine reduction, auto-level, and optional de-esser without EQ transfer.

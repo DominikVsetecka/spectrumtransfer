@@ -1786,21 +1786,21 @@ run_audio_pipeline() {
   if [[ "$mode" == "fast" ]]; then
     set_fast_pipeline_defaults
   else
-    echo
-    echo "Choose optional processing steps in this order:"
-    echo "  1) Auto level"
-    echo "  2) De-Esser"
-    echo "  3) Spectrum Master"
-    echo "  4) Peak normalizer"
-    echo "  5) Peak ceiling"
-    echo "  6) Whine"
+  echo
+  echo "Choose optional processing steps in this order:"
+  echo "  1) Auto level"
+  echo "  2) Spectrum Master"
+  echo "  3) De-Esser"
+  echo "  4) Peak normalizer"
+  echo "  5) Peak ceiling"
+  echo "  6) Whine"
 
-    ask_dynamics_profile
-    ask_deesser_profile
-    ask_spectrum_profile
-    ask_peak_normalizer_profile
-    ask_peak_ceiling_profile
-    ask_whine_profile
+  ask_dynamics_profile
+  ask_spectrum_profile
+  ask_deesser_profile
+  ask_peak_normalizer_profile
+  ask_peak_ceiling_profile
+  ask_whine_profile
   fi
 
   if [[ ${#DYNAMICS_ARGS[@]} -eq 0 \

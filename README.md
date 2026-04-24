@@ -59,8 +59,8 @@ Menu:
 The pipeline asks for a target `.wav`/`.mp4` file or a folder first, then offers these optional steps in order:
 
 - Auto level
-- De-Esser
 - Spectrum Master (`.wav`, `.csv`, or `.mp4` audio/curve reference; `.txt` spectrum references remain curve-only)
+- De-Esser
 - Peak normalizer to `-6 dBFS`
 - Peak ceiling at `-6 dBFS`
 - Whine reduction

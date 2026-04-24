@@ -1761,19 +1761,6 @@ def main() -> int:
             )
             print(msg)
 
-        if args.de_ess:
-            msg = apply_deesser_to_wav(
-                processed_wav=args.out_wav,
-                low_hz=args.de_ess_low_hz,
-                high_hz=args.de_ess_high_hz,
-                threshold_dbfs=args.de_ess_threshold_dbfs,
-                ratio=args.de_ess_ratio,
-                attack_ms=args.de_ess_attack_ms,
-                release_ms=args.de_ess_release_ms,
-                strength=args.de_ess_strength,
-            )
-            print(msg)
-
         if args.spectrum_reference_wav and args.spectrum_curve_csv:
             raise ValueError("Use either --spectrum-reference-wav or --spectrum-curve-csv, not both.")
 
@@ -1820,6 +1807,19 @@ def main() -> int:
                 mix=args.mix,
             )
             print("[spectrum] applied curve CSV.")
+
+        if args.de_ess:
+            msg = apply_deesser_to_wav(
+                processed_wav=args.out_wav,
+                low_hz=args.de_ess_low_hz,
+                high_hz=args.de_ess_high_hz,
+                threshold_dbfs=args.de_ess_threshold_dbfs,
+                ratio=args.de_ess_ratio,
+                attack_ms=args.de_ess_attack_ms,
+                release_ms=args.de_ess_release_ms,
+                strength=args.de_ess_strength,
+            )
+            print(msg)
 
         if args.peak_normalize:
             msg = apply_peak_normalize_to_wav(

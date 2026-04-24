@@ -9,6 +9,11 @@ PY_BIN=""
 DYNAMICS_ARGS=()
 DEESS_ARGS=()
 WHINE_ARGS=()
+SPECTRUM_REF=""
+SPECTRUM_REF_WAV=""
+SPECTRUM_ARGS=()
+PEAK_NORMALIZE_ARGS=()
+PEAK_CEILING_ARGS=()
 
 normalize_input_path() {
   local raw="$1"
@@ -39,6 +44,42 @@ lower_ext() {
   echo "$ext" | tr '[:upper:]' '[:lower:]'
 }
 
+file_stem() {
+  local name
+  name="$(basename "$1")"
+  echo "${name%.*}"
+}
+
+canonical_path() {
+  local path="$1"
+  local dir
+  local name
+  dir="$(cd "$(dirname "$path")" && pwd)"
+  name="$(basename "$path")"
+  echo "$dir/$name"
+}
+
+same_file_path() {
+  [[ "$(canonical_path "$1")" == "$(canonical_path "$2")" ]]
+}
+
+is_generated_artifact() {
+  local name
+  name="$(basename "$1")"
+  case "$name" in
+    *_matched_*|*_applied_*|*_fixed_*|*_whine_reduced_*|*_audio_original_*|*_audio_matched_*|*_audio_fixed_*|*_audio_whine_reduced_*|*_desired_audio_*|*_curve_*|*_audacity_*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+folder_contains_ext() {
+  local folder="$1"
+  local ext="$2"
+  [[ -n "$(find "$folder" -maxdepth 1 -type f -iname "*.$ext" -print -quit)" ]]
+}
+
 stamp() {
   date +"%Y%m%d_%H%M%S"
 }
@@ -47,6 +88,52 @@ wait_for_enter() {
   echo
   echo "Press Enter to continue."
   read -r _
+}
+
+print_failed_files() {
+  local file
+
+  if [[ "$#" -eq 0 ]]; then
+    return
+  fi
+
+  echo
+  echo "Failed files ($#):"
+  for file in "$@"; do
+    echo "  - $file"
+  done
+}
+
+ask_retry_failed_files() {
+  local ans
+
+  echo
+  printf "Retry failed files now? [y/N]: "
+  IFS= read -r ans
+  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+
+  case "$ans" in
+    y|yes|j|ja)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+ask_yes_no() {
+  local label="$1"
+  local ans
+
+  printf "%s [y/N]: " "$label"
+  IFS= read -r ans
+  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+
+  case "$ans" in
+    y|yes|j|ja)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 ask_file_path() {
@@ -275,6 +362,117 @@ ask_whine_profile() {
   esac
 }
 
+ask_spectrum_profile() {
+  local ref ext
+
+  SPECTRUM_REF=""
+  SPECTRUM_REF_WAV=""
+  SPECTRUM_ARGS=()
+
+  echo
+  if ! ask_yes_no "Spectrum Master (EQ transfer / curve apply)"; then
+    echo "Spectrum Master: off"
+    return
+  fi
+
+  ref="$(ask_file_path 'File 1 desired/reference (wav/txt/csv/mp4): ')"
+  if [[ -z "$ref" || ! -f "$ref" ]]; then
+    echo "Spectrum Master: valid reference file required, disabling."
+    return
+  fi
+
+  ext="$(lower_ext "$ref")"
+  case "$ext" in
+    wav|csv|mp4)
+      SPECTRUM_REF="$ref"
+      echo "Spectrum Master: on"
+      ;;
+    txt)
+      echo "TXT spectrum references are only supported by the old curve-only flow, not this audio pipeline."
+      echo "Spectrum Master: off"
+      ;;
+    *)
+      echo "Spectrum Master supports .wav, .csv, or .mp4 here."
+      echo "Spectrum Master: off"
+      ;;
+  esac
+}
+
+ask_peak_normalizer_profile() {
+  PEAK_NORMALIZE_ARGS=()
+
+  echo
+  if ask_yes_no "Peak normalizer to -6 dBFS"; then
+    PEAK_NORMALIZE_ARGS=(--peak-normalize --peak-normalize-dbfs -6.0)
+    echo "Peak normalizer: -6 dBFS"
+  else
+    echo "Peak normalizer: off"
+  fi
+}
+
+ask_peak_ceiling_profile() {
+  PEAK_CEILING_ARGS=()
+
+  echo
+  if ask_yes_no "Peak ceiling at -6 dBFS"; then
+    PEAK_CEILING_ARGS=(--peak-ceiling --peak-ceiling-dbfs -6.0)
+    echo "Peak ceiling: -6 dBFS"
+  else
+    echo "Peak ceiling: off"
+  fi
+}
+
+set_fast_pipeline_defaults() {
+  DYNAMICS_ARGS=(
+    --auto-level
+    --target-dbfs -6.0
+    --level-floor-dbfs -42.0
+    --max-auto-boost-db 12.0
+    --max-auto-cut-db 12.0
+    --auto-attack-ms 35.0
+    --auto-release-ms 450.0
+    --compressor-threshold-dbfs -12.0
+    --compressor-ratio 2.2
+    --compressor-attack-ms 12.0
+    --compressor-release-ms 120.0
+    --limiter-ceiling-dbfs -3.0
+    --dynamics-strength 1.0
+  )
+  DEESS_ARGS=(
+    --de-ess
+    --de-ess-low-hz 4500
+    --de-ess-high-hz 10000
+    --de-ess-threshold-dbfs -30.0
+    --de-ess-ratio 3.0
+    --de-ess-attack-ms 5.0
+    --de-ess-release-ms 90.0
+    --de-ess-strength 0.70
+  )
+  SPECTRUM_REF=""
+  SPECTRUM_REF_WAV=""
+  SPECTRUM_ARGS=()
+  PEAK_NORMALIZE_ARGS=(--peak-normalize --peak-normalize-dbfs -6.0)
+  PEAK_CEILING_ARGS=(--peak-ceiling --peak-ceiling-dbfs -6.0)
+  WHINE_ARGS=(
+    --whine-high-cut
+    --whine-high-cut-freq-hz 17400
+    --whine-high-cut-gain-db -30.0
+    --whine-high-cut-q 1.2
+    --whine-notch-hz 15600
+    --whine-notch-gain-db -14.0
+    --whine-notch-q 9.0
+  )
+
+  echo
+  echo "Fast settings:"
+  echo "  Auto level: gentle"
+  echo "  De-Esser: gentle"
+  echo "  Spectrum Master: off"
+  echo "  Peak normalizer: -6 dBFS"
+  echo "  Peak ceiling: -6 dBFS"
+  echo "  Whine reduction: gentle"
+}
+
 run_match_command() {
   local desired_wav="$1"
   local target_wav="$2"
@@ -305,6 +503,691 @@ run_match_command() {
   "${cmd[@]}"
 }
 
+process_match_wav_target() {
+  local desired_wav="$1"
+  local target_wav="$2"
+  local ts="$3"
+  local target_dir target_base out_wav out_csv out_preset
+
+  target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
+  target_base="$(file_stem "$target_wav")"
+  out_wav="$target_dir/${target_base}_matched_${ts}.wav"
+  out_csv="$target_dir/${target_base}_curve_${ts}.csv"
+  out_preset="$target_dir/${target_base}_audacity_${ts}.txt"
+
+  echo
+  echo "Processing WAV: $target_wav"
+  if run_match_command "$desired_wav" "$target_wav" "$out_wav" "$out_csv" "$out_preset"; then
+    echo "Output WAV: $out_wav"
+    echo "Curve CSV:  $out_csv"
+    echo "Preset TXT: $out_preset"
+    return 0
+  fi
+
+  echo "EQ processing failed: $target_wav"
+  return 1
+}
+
+process_curve_txt_target() {
+  local desired_txt="$1"
+  local target_txt="$2"
+  local ts="$3"
+  local target_dir target_base out_csv out_preset
+
+  target_dir="$(cd "$(dirname "$target_txt")" && pwd)"
+  target_base="$(file_stem "$target_txt")"
+  out_csv="$target_dir/${target_base}_curve_${ts}.csv"
+  out_preset="$target_dir/${target_base}_audacity_${ts}.txt"
+
+  echo
+  echo "Processing TXT spectrum: $target_txt"
+  if "$PY_BIN" "$PY_SCRIPT" curve \
+    --desired-spectrum "$desired_txt" \
+    --target-spectrum "$target_txt" \
+    --curve-csv "$out_csv" \
+    --audacity-preset "$out_preset" \
+    "${WHINE_ARGS[@]}"; then
+    echo "Curve CSV:  $out_csv"
+    echo "Preset TXT: $out_preset"
+    return 0
+  fi
+
+  echo "Curve build failed: $target_txt"
+  return 1
+}
+
+process_apply_curve_target() {
+  local curve_csv="$1"
+  local target_wav="$2"
+  local ts="$3"
+  local target_dir target_base out_wav
+
+  target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
+  target_base="$(file_stem "$target_wav")"
+  out_wav="$target_dir/${target_base}_applied_${ts}.wav"
+
+  echo
+  echo "Applying curve to WAV: $target_wav"
+  if "$PY_BIN" "$PY_SCRIPT" apply \
+    --curve-csv "$curve_csv" \
+    --target-wav "$target_wav" \
+    --out-wav "$out_wav" \
+    "${DYNAMICS_ARGS[@]}" \
+    "${DEESS_ARGS[@]}" \
+    "${WHINE_ARGS[@]}"; then
+    echo "Output WAV: $out_wav"
+    return 0
+  fi
+
+  echo "Apply failed: $target_wav"
+  return 1
+}
+
+process_desired_wav_target_mp4() {
+  local desired_wav="$1"
+  local target_mp4="$2"
+  local ts="$3"
+  local target_dir target_base extract_wav matched_wav out_csv out_preset out_mp4
+
+  target_dir="$(cd "$(dirname "$target_mp4")" && pwd)"
+  target_base="$(file_stem "$target_mp4")"
+  extract_wav="$target_dir/${target_base}_audio_original_${ts}.wav"
+  matched_wav="$target_dir/${target_base}_audio_matched_${ts}.wav"
+  out_csv="$target_dir/${target_base}_curve_${ts}.csv"
+  out_preset="$target_dir/${target_base}_audacity_${ts}.txt"
+  out_mp4="$target_dir/${target_base}_matched_${ts}.mp4"
+
+  echo
+  echo "Processing MP4: $target_mp4"
+  echo "Extracting audio from target MP4 ..."
+  if ! extract_mp4_audio_wav "$target_mp4" "$extract_wav"; then
+    echo "Audio extraction failed: $target_mp4"
+    return 1
+  fi
+
+  if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
+    echo "Writing processed audio back to MP4 ..."
+    if remux_target_with_wav "$target_mp4" "$matched_wav" "$out_mp4"; then
+      rm -f "$extract_wav"
+      echo "Output MP4: $out_mp4"
+      return 0
+    fi
+    echo "MP4 remux failed: $target_mp4"
+    return 1
+  fi
+
+  echo "Match failed: $target_mp4"
+  return 1
+}
+
+process_whine_wav_target() {
+  local target_wav="$1"
+  local ts="$2"
+  local target_dir base out_wav
+
+  target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
+  base="$(file_stem "$target_wav")"
+  out_wav="$target_dir/${base}_whine_reduced_${ts}.wav"
+
+  echo
+  echo "Processing WAV: $target_wav"
+  if "$PY_BIN" "$PY_SCRIPT" whine \
+    --target-wav "$target_wav" \
+    --out-wav "$out_wav" \
+    "${WHINE_ARGS[@]}"; then
+    echo "Output WAV: $out_wav"
+    return 0
+  fi
+
+  echo "Whine-only processing failed: $target_wav"
+  return 1
+}
+
+process_whine_mp4_target() {
+  local target_mp4="$1"
+  local ts="$2"
+  local target_dir base extract_wav out_wav out_mp4
+
+  target_dir="$(cd "$(dirname "$target_mp4")" && pwd)"
+  base="$(file_stem "$target_mp4")"
+  extract_wav="$target_dir/${base}_audio_original_${ts}.wav"
+  out_wav="$target_dir/${base}_audio_whine_reduced_${ts}.wav"
+  out_mp4="$target_dir/${base}_whine_reduced_${ts}.mp4"
+
+  echo
+  echo "Processing MP4: $target_mp4"
+  echo "Extracting audio from MP4 ..."
+  if ! extract_mp4_audio_wav "$target_mp4" "$extract_wav"; then
+    echo "Audio extraction failed: $target_mp4"
+    return 1
+  fi
+
+  if "$PY_BIN" "$PY_SCRIPT" whine \
+    --target-wav "$extract_wav" \
+    --out-wav "$out_wav" \
+    "${WHINE_ARGS[@]}"; then
+    echo "Writing processed audio back to MP4 ..."
+    if remux_target_with_wav "$target_mp4" "$out_wav" "$out_mp4"; then
+      rm -f "$extract_wav"
+      echo "Output MP4: $out_mp4"
+      echo "Output WAV: $out_wav"
+      return 0
+    fi
+    echo "MP4 remux failed: $target_mp4"
+    return 1
+  fi
+
+  echo "Whine-only processing failed: $target_mp4"
+  return 1
+}
+
+process_audio_fix_wav_target() {
+  local target_wav="$1"
+  local ts="$2"
+  local target_dir base out_wav
+  local -a cmd
+
+  target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
+  base="$(file_stem "$target_wav")"
+  out_wav="$target_dir/${base}_fixed_${ts}.wav"
+
+  cmd=(
+    "$PY_BIN" "$PY_SCRIPT" fix
+    --target-wav "$target_wav"
+    --out-wav "$out_wav"
+  )
+  if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
+    cmd+=("${DYNAMICS_ARGS[@]}")
+  fi
+  if (( ${#DEESS_ARGS[@]} > 0 )); then
+    cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#WHINE_ARGS[@]} > 0 )); then
+    cmd+=("${WHINE_ARGS[@]}")
+  fi
+
+  echo
+  echo "Fixing WAV: $target_wav"
+  if "${cmd[@]}"; then
+    echo "Output WAV: $out_wav"
+    return 0
+  fi
+
+  echo "Audio fix failed: $target_wav"
+  return 1
+}
+
+process_audio_fix_mp4_target() {
+  local target_mp4="$1"
+  local ts="$2"
+  local target_dir base extract_wav out_wav out_mp4
+  local -a cmd
+
+  target_dir="$(cd "$(dirname "$target_mp4")" && pwd)"
+  base="$(file_stem "$target_mp4")"
+  extract_wav="$target_dir/${base}_audio_original_${ts}.wav"
+  out_wav="$target_dir/${base}_audio_fixed_${ts}.wav"
+  out_mp4="$target_dir/${base}_fixed_${ts}.mp4"
+  cmd=(
+    "$PY_BIN" "$PY_SCRIPT" fix
+    --target-wav "$extract_wav"
+    --out-wav "$out_wav"
+  )
+  if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
+    cmd+=("${DYNAMICS_ARGS[@]}")
+  fi
+  if (( ${#DEESS_ARGS[@]} > 0 )); then
+    cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#WHINE_ARGS[@]} > 0 )); then
+    cmd+=("${WHINE_ARGS[@]}")
+  fi
+
+  echo
+  echo "Fixing MP4: $target_mp4"
+  echo "Extracting audio from MP4 ..."
+  if ! extract_mp4_audio_wav "$target_mp4" "$extract_wav"; then
+    echo "Audio extraction failed: $target_mp4"
+    return 1
+  fi
+
+  if "${cmd[@]}"; then
+    echo "Writing fixed audio back to MP4 ..."
+    if remux_target_with_wav "$target_mp4" "$out_wav" "$out_mp4"; then
+      rm -f "$extract_wav"
+      echo "Output MP4: $out_mp4"
+      echo "Output WAV: $out_wav"
+      return 0
+    fi
+    echo "MP4 remux failed: $target_mp4"
+    return 1
+  fi
+
+  echo "Audio fix failed: $target_mp4"
+  return 1
+}
+
+process_mp4_to_wav_target() {
+  local target_mp4="$1"
+  local out_wav
+
+  out_wav="${target_mp4%.*}.wav"
+  echo
+  echo "Converting MP4: $target_mp4"
+  if extract_mp4_audio_wav "$target_mp4" "$out_wav"; then
+    echo "Saved WAV: $out_wav"
+    return 0
+  fi
+
+  echo "MP4 -> WAV conversion failed: $target_mp4"
+  return 1
+}
+
+prepare_spectrum_reference() {
+  local work_dir="$1"
+  local ts="$2"
+  local ext base
+
+  SPECTRUM_REF_WAV=""
+
+  if [[ -z "$SPECTRUM_REF" ]]; then
+    return 0
+  fi
+
+  ext="$(lower_ext "$SPECTRUM_REF")"
+  case "$ext" in
+    wav)
+      SPECTRUM_REF_WAV="$SPECTRUM_REF"
+      return 0
+      ;;
+    csv)
+      return 0
+      ;;
+    mp4)
+      if ! ensure_ffmpeg; then
+        return 1
+      fi
+      base="$(file_stem "$SPECTRUM_REF")"
+      SPECTRUM_REF_WAV="$work_dir/${base}_desired_audio_${ts}.wav"
+      echo "Extracting Spectrum Master reference MP4 audio once ..."
+      extract_mp4_audio_wav "$SPECTRUM_REF" "$SPECTRUM_REF_WAV"
+      return $?
+      ;;
+  esac
+
+  return 1
+}
+
+process_pipeline_wav_target() {
+  local target_wav="$1"
+  local ts="$2"
+  local target_dir base out_wav curve_csv preset spectrum_ext
+  local -a cmd
+
+  target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
+  base="$(file_stem "$target_wav")"
+  out_wav="$target_dir/${base}_processed_${ts}.wav"
+  curve_csv="$target_dir/${base}_curve_${ts}.csv"
+  preset="$target_dir/${base}_audacity_${ts}.txt"
+
+  cmd=(
+    "$PY_BIN" "$PY_SCRIPT" pipeline
+    --target-wav "$target_wav"
+    --out-wav "$out_wav"
+  )
+  if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
+    cmd+=("${DYNAMICS_ARGS[@]}")
+  fi
+  if (( ${#DEESS_ARGS[@]} > 0 )); then
+    cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#WHINE_ARGS[@]} > 0 )); then
+    cmd+=("${WHINE_ARGS[@]}")
+  fi
+  if [[ -n "$SPECTRUM_REF" ]]; then
+    spectrum_ext="$(lower_ext "$SPECTRUM_REF")"
+    if [[ "$spectrum_ext" == "csv" ]]; then
+      cmd+=(--spectrum-curve-csv "$SPECTRUM_REF")
+    elif [[ -n "$SPECTRUM_REF_WAV" ]]; then
+      cmd+=(
+        --spectrum-reference-wav "$SPECTRUM_REF_WAV"
+        --out-curve-csv "$curve_csv"
+        --audacity-preset "$preset"
+      )
+    fi
+  fi
+  if (( ${#PEAK_NORMALIZE_ARGS[@]} > 0 )); then
+    cmd+=("${PEAK_NORMALIZE_ARGS[@]}")
+  fi
+  if (( ${#PEAK_CEILING_ARGS[@]} > 0 )); then
+    cmd+=("${PEAK_CEILING_ARGS[@]}")
+  fi
+
+  echo
+  echo "Processing WAV: $target_wav"
+  if "${cmd[@]}"; then
+    echo "Output WAV: $out_wav"
+    if [[ -n "$SPECTRUM_REF" && "$(lower_ext "$SPECTRUM_REF")" != "csv" ]]; then
+      echo "Curve CSV:  $curve_csv"
+      echo "Preset TXT: $preset"
+    fi
+    return 0
+  fi
+
+  echo "Processing failed: $target_wav"
+  return 1
+}
+
+process_pipeline_mp4_target() {
+  local target_mp4="$1"
+  local ts="$2"
+  local target_dir base extract_wav out_wav out_mp4 curve_csv preset spectrum_ext
+  local -a cmd
+
+  target_dir="$(cd "$(dirname "$target_mp4")" && pwd)"
+  base="$(file_stem "$target_mp4")"
+  extract_wav="$target_dir/${base}_audio_original_${ts}.wav"
+  out_wav="$target_dir/${base}_audio_processed_${ts}.wav"
+  out_mp4="$target_dir/${base}_processed_${ts}.mp4"
+  curve_csv="$target_dir/${base}_curve_${ts}.csv"
+  preset="$target_dir/${base}_audacity_${ts}.txt"
+
+  echo
+  echo "Processing MP4: $target_mp4"
+  echo "Extracting audio from MP4 ..."
+  if ! extract_mp4_audio_wav "$target_mp4" "$extract_wav"; then
+    echo "Audio extraction failed: $target_mp4"
+    return 1
+  fi
+
+  cmd=(
+    "$PY_BIN" "$PY_SCRIPT" pipeline
+    --target-wav "$extract_wav"
+    --out-wav "$out_wav"
+  )
+  if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
+    cmd+=("${DYNAMICS_ARGS[@]}")
+  fi
+  if (( ${#DEESS_ARGS[@]} > 0 )); then
+    cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#WHINE_ARGS[@]} > 0 )); then
+    cmd+=("${WHINE_ARGS[@]}")
+  fi
+  if [[ -n "$SPECTRUM_REF" ]]; then
+    spectrum_ext="$(lower_ext "$SPECTRUM_REF")"
+    if [[ "$spectrum_ext" == "csv" ]]; then
+      cmd+=(--spectrum-curve-csv "$SPECTRUM_REF")
+    elif [[ -n "$SPECTRUM_REF_WAV" ]]; then
+      cmd+=(
+        --spectrum-reference-wav "$SPECTRUM_REF_WAV"
+        --out-curve-csv "$curve_csv"
+        --audacity-preset "$preset"
+      )
+    fi
+  fi
+  if (( ${#PEAK_NORMALIZE_ARGS[@]} > 0 )); then
+    cmd+=("${PEAK_NORMALIZE_ARGS[@]}")
+  fi
+  if (( ${#PEAK_CEILING_ARGS[@]} > 0 )); then
+    cmd+=("${PEAK_CEILING_ARGS[@]}")
+  fi
+
+  if "${cmd[@]}"; then
+    echo "Writing processed audio back to MP4 ..."
+    if remux_target_with_wav "$target_mp4" "$out_wav" "$out_mp4"; then
+      rm -f "$extract_wav"
+      echo "Output MP4: $out_mp4"
+      echo "Output WAV: $out_wav"
+      if [[ -n "$SPECTRUM_REF" && "$(lower_ext "$SPECTRUM_REF")" != "csv" ]]; then
+        echo "Curve CSV:  $curve_csv"
+        echo "Preset TXT: $preset"
+      fi
+      return 0
+    fi
+    echo "MP4 remux failed: $target_mp4"
+    return 1
+  fi
+
+  echo "Processing failed: $target_mp4"
+  return 1
+}
+
+run_spectrum_master_folder() {
+  local a="$1"
+  local folder="$2"
+  local ea="$3"
+  local ts="$4"
+  local processed=0
+  local failed=0
+  local skipped=0
+  local target ext desired_base desired_wav retry_processed retry_failed
+  local -a failed_files retry_failed_files
+
+  echo
+  echo "Batch folder: $folder"
+  echo "Generated files from previous runs are skipped."
+
+  if [[ "$ea" == "wav" ]]; then
+    if folder_contains_ext "$folder" "mp4" && ! ensure_ffmpeg; then
+      return
+    fi
+
+    ask_dynamics_profile
+    ask_deesser_profile
+    ask_whine_profile
+
+    failed_files=()
+    while IFS= read -r target; do
+      ext="$(lower_ext "$target")"
+      if same_file_path "$a" "$target" || is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if [[ "$ext" == "wav" ]]; then
+        if process_match_wav_target "$a" "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      elif [[ "$ext" == "mp4" ]]; then
+        if process_desired_wav_target_mp4 "$a" "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      fi
+    done < <(find "$folder" -maxdepth 1 -type f \( -iname "*.wav" -o -iname "*.mp4" \) -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          ext="$(lower_ext "$target")"
+          if [[ "$ext" == "wav" ]]; then
+            if process_match_wav_target "$a" "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          elif [[ "$ext" == "mp4" ]]; then
+            if process_desired_wav_target_mp4 "$a" "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ea" == "mp4" ]]; then
+    if ! ensure_ffmpeg; then
+      return
+    fi
+
+    desired_base="$(file_stem "$a")"
+    desired_wav="$folder/${desired_base}_desired_audio_${ts}.wav"
+
+    echo "Extracting desired MP4 audio once ..."
+    if ! extract_mp4_audio_wav "$a" "$desired_wav"; then
+      echo "Desired MP4 audio extraction failed."
+      wait_for_enter
+      return
+    fi
+
+    ask_dynamics_profile
+    ask_deesser_profile
+    ask_whine_profile
+
+    failed_files=()
+    while IFS= read -r target; do
+      if same_file_path "$a" "$target" || is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if process_desired_wav_target_mp4 "$desired_wav" "$target" "$ts"; then
+        processed=$((processed + 1))
+      else
+        failed=$((failed + 1))
+        failed_files+=("$target")
+      fi
+    done < <(find "$folder" -maxdepth 1 -type f -iname "*.mp4" -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          if process_desired_wav_target_mp4 "$desired_wav" "$target" "$ts"; then
+            retry_processed=$((retry_processed + 1))
+          else
+            retry_failed=$((retry_failed + 1))
+            retry_failed_files+=("$target")
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ea" == "csv" ]]; then
+    ask_dynamics_profile
+    ask_deesser_profile
+    ask_whine_profile
+
+    failed_files=()
+    while IFS= read -r target; do
+      if is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if process_apply_curve_target "$a" "$target" "$ts"; then
+        processed=$((processed + 1))
+      else
+        failed=$((failed + 1))
+        failed_files+=("$target")
+      fi
+    done < <(find "$folder" -maxdepth 1 -type f -iname "*.wav" -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          if process_apply_curve_target "$a" "$target" "$ts"; then
+            retry_processed=$((retry_processed + 1))
+          else
+            retry_failed=$((retry_failed + 1))
+            retry_failed_files+=("$target")
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ea" == "txt" ]]; then
+    ask_whine_profile
+
+    failed_files=()
+    while IFS= read -r target; do
+      if same_file_path "$a" "$target" || is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if process_curve_txt_target "$a" "$target" "$ts"; then
+        processed=$((processed + 1))
+      else
+        failed=$((failed + 1))
+        failed_files+=("$target")
+      fi
+    done < <(find "$folder" -maxdepth 1 -type f -iname "*.txt" -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          if process_curve_txt_target "$a" "$target" "$ts"; then
+            retry_processed=$((retry_processed + 1))
+          else
+            retry_failed=$((retry_failed + 1))
+            retry_failed_files+=("$target")
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  echo "Folder mode needs File 1 to be .wav, .mp4, .csv, or .txt."
+  wait_for_enter
+}
+
 run_spectrum_master() {
   local a
   local b
@@ -315,21 +1198,28 @@ run_spectrum_master() {
   echo
   echo "Enter files in this order:"
   echo "  File 1: desired/reference (wav/txt/csv/mp4)"
-  echo "  File 2: target (wav/txt/mp4)"
+  echo "  File 2: target file or folder (wav/txt/mp4/folder)"
   echo
   echo "Supported combos: wav+wav, txt+txt, csv+wav, wav+mp4, mp4+mp4"
+  echo "Folder mode: wav/mp4/csv/txt reference + target folder"
 
   a="$(ask_file_path 'File 1: ')"
   b="$(ask_file_path 'File 2: ')"
 
   if [[ -z "$a" || -z "$b" ]]; then
-    echo "Both file paths are required."
+    echo "Both paths are required."
     wait_for_enter
     return
   fi
 
-  if [[ ! -f "$a" || ! -f "$b" ]]; then
-    echo "Both inputs must be existing files."
+  if [[ ! -f "$a" ]]; then
+    echo "File 1 must be an existing file."
+    wait_for_enter
+    return
+  fi
+
+  if [[ ! -f "$b" && ! -d "$b" ]]; then
+    echo "File 2 must be an existing file or folder."
     wait_for_enter
     return
   fi
@@ -339,8 +1229,14 @@ run_spectrum_master() {
   fi
   ensure_python_env
   ea="$(lower_ext "$a")"
-  eb="$(lower_ext "$b")"
   ts="$(stamp)"
+
+  if [[ -d "$b" ]]; then
+    run_spectrum_master_folder "$a" "$(cd "$b" && pwd)" "$ea" "$ts"
+    return
+  fi
+
+  eb="$(lower_ext "$b")"
 
   # Mode: WAV + WAV
   if [[ "$ea" == "wav" && "$eb" == "wav" ]]; then
@@ -460,6 +1356,7 @@ run_spectrum_master() {
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to MP4 ..."
       remux_target_with_wav "$target_mp4" "$matched_wav" "$out_mp4"
+      rm -f "$extract_wav"
       echo "Output MP4: $out_mp4"
     else
       echo "Match failed."
@@ -503,6 +1400,7 @@ run_spectrum_master() {
     if run_match_command "$desired_wav" "$extract_wav" "$matched_wav" "$out_csv" "$out_preset"; then
       echo "Writing processed audio back to target MP4 ..."
       remux_target_with_wav "$target_mp4" "$matched_wav" "$out_mp4"
+      rm -f "$extract_wav"
       echo "Output MP4: $out_mp4"
     else
       echo "Match failed."
@@ -517,16 +1415,65 @@ run_spectrum_master() {
 }
 
 run_mp4_to_wav() {
-  local in_mp4 out_wav
+  local in_mp4 target processed failed skipped retry_processed retry_failed
+  local -a failed_files retry_failed_files
 
   if ! ensure_ffmpeg; then
     return
   fi
 
   echo
-  in_mp4="$(ask_file_path 'MP4 file: ')"
-  if [[ -z "$in_mp4" || ! -f "$in_mp4" ]]; then
-    echo "Valid MP4 path required."
+  in_mp4="$(ask_file_path 'MP4 file or folder: ')"
+  if [[ -z "$in_mp4" || ( ! -f "$in_mp4" && ! -d "$in_mp4" ) ]]; then
+    echo "Valid MP4 path or folder required."
+    wait_for_enter
+    return
+  fi
+
+  if [[ -d "$in_mp4" ]]; then
+    processed=0
+    failed=0
+    skipped=0
+    failed_files=()
+    echo
+    echo "Batch folder: $in_mp4"
+    echo "Generated files from previous runs are skipped."
+
+    while IFS= read -r target; do
+      if is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if process_mp4_to_wav_target "$target"; then
+        processed=$((processed + 1))
+      else
+        failed=$((failed + 1))
+        failed_files+=("$target")
+      fi
+    done < <(find "$in_mp4" -maxdepth 1 -type f -iname "*.mp4" -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          if process_mp4_to_wav_target "$target"; then
+            retry_processed=$((retry_processed + 1))
+          else
+            retry_failed=$((retry_failed + 1))
+            retry_failed_files+=("$target")
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
     wait_for_enter
     return
   fi
@@ -537,22 +1484,19 @@ run_mp4_to_wav() {
     return
   fi
 
-  out_wav="${in_mp4%.*}.wav"
-  if extract_mp4_audio_wav "$in_mp4" "$out_wav"; then
-    echo "Saved WAV: $out_wav"
-  else
-    echo "MP4 -> WAV conversion failed."
-  fi
+  process_mp4_to_wav_target "$in_mp4"
   wait_for_enter
 }
 
 run_whine_only() {
   local in_file ext ts target_dir base out_wav out_mp4 extract_wav
+  local target processed failed skipped retry_processed retry_failed
+  local -a failed_files retry_failed_files
 
   echo
-  in_file="$(ask_file_path 'WAV or MP4 file: ')"
-  if [[ -z "$in_file" || ! -f "$in_file" ]]; then
-    echo "Valid WAV or MP4 path required."
+  in_file="$(ask_file_path 'WAV/MP4 file or folder: ')"
+  if [[ -z "$in_file" || ( ! -f "$in_file" && ! -d "$in_file" ) ]]; then
+    echo "Valid WAV/MP4 path or folder required."
     wait_for_enter
     return
   fi
@@ -562,9 +1506,7 @@ run_whine_only() {
   fi
   ensure_python_env
 
-  ext="$(lower_ext "$in_file")"
   ts="$(stamp)"
-  target_dir="$(cd "$(dirname "$in_file")" && pwd)"
 
   ask_whine_profile
 
@@ -574,8 +1516,83 @@ run_whine_only() {
     return
   fi
 
+  if [[ -d "$in_file" ]]; then
+    if folder_contains_ext "$in_file" "mp4" && ! ensure_ffmpeg; then
+      return
+    fi
+
+    processed=0
+    failed=0
+    skipped=0
+    failed_files=()
+    echo
+    echo "Batch folder: $in_file"
+    echo "Generated files from previous runs are skipped."
+
+    while IFS= read -r target; do
+      ext="$(lower_ext "$target")"
+      if is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if [[ "$ext" == "wav" ]]; then
+        if process_whine_wav_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      elif [[ "$ext" == "mp4" ]]; then
+        if process_whine_mp4_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      fi
+    done < <(find "$in_file" -maxdepth 1 -type f \( -iname "*.wav" -o -iname "*.mp4" \) -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          ext="$(lower_ext "$target")"
+          if [[ "$ext" == "wav" ]]; then
+            if process_whine_wav_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          elif [[ "$ext" == "mp4" ]]; then
+            if process_whine_mp4_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  ext="$(lower_ext "$in_file")"
+  target_dir="$(cd "$(dirname "$in_file")" && pwd)"
+
   if [[ "$ext" == "wav" ]]; then
-    base="$(basename "$in_file" .wav)"
+    base="$(file_stem "$in_file")"
     out_wav="$target_dir/${base}_whine_reduced_${ts}.wav"
 
     if "$PY_BIN" "$PY_SCRIPT" whine \
@@ -595,7 +1612,7 @@ run_whine_only() {
       return
     fi
 
-    base="$(basename "$in_file" .mp4)"
+    base="$(file_stem "$in_file")"
     extract_wav="$target_dir/${base}_audio_original_${ts}.wav"
     out_wav="$target_dir/${base}_audio_whine_reduced_${ts}.wav"
     out_mp4="$target_dir/${base}_whine_reduced_${ts}.mp4"
@@ -609,11 +1626,292 @@ run_whine_only() {
       "${WHINE_ARGS[@]}"; then
       echo "Writing processed audio back to MP4 ..."
       remux_target_with_wav "$in_file" "$out_wav" "$out_mp4"
+      rm -f "$extract_wav"
       echo "Output MP4: $out_mp4"
       echo "Output WAV: $out_wav"
     else
       echo "Whine-only processing failed."
     fi
+    wait_for_enter
+    return
+  fi
+
+  echo "Only .wav and .mp4 are supported here."
+  wait_for_enter
+}
+
+run_audio_fix() {
+  local in_file ext ts target processed failed skipped retry_processed retry_failed
+  local -a failed_files retry_failed_files
+
+  echo
+  in_file="$(ask_file_path 'WAV/MP4 file or folder: ')"
+  if [[ -z "$in_file" || ( ! -f "$in_file" && ! -d "$in_file" ) ]]; then
+    echo "Valid WAV/MP4 path or folder required."
+    wait_for_enter
+    return
+  fi
+
+  if ! ensure_python_version; then
+    return
+  fi
+  ensure_python_env
+
+  ts="$(stamp)"
+
+  ask_dynamics_profile
+  ask_deesser_profile
+  ask_whine_profile
+
+  if [[ ${#DYNAMICS_ARGS[@]} -eq 0 && ${#DEESS_ARGS[@]} -eq 0 && ${#WHINE_ARGS[@]} -eq 0 ]]; then
+    echo "Auto-Level, De-Esser, and Whine reduction are off, nothing to do."
+    wait_for_enter
+    return
+  fi
+
+  if [[ -d "$in_file" ]]; then
+    if folder_contains_ext "$in_file" "mp4" && ! ensure_ffmpeg; then
+      return
+    fi
+
+    processed=0
+    failed=0
+    skipped=0
+    failed_files=()
+    echo
+    echo "Batch folder: $in_file"
+    echo "Generated files from previous runs are skipped."
+
+    while IFS= read -r target; do
+      ext="$(lower_ext "$target")"
+      if is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if [[ "$ext" == "wav" ]]; then
+        if process_audio_fix_wav_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      elif [[ "$ext" == "mp4" ]]; then
+        if process_audio_fix_mp4_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      fi
+    done < <(find "$in_file" -maxdepth 1 -type f \( -iname "*.wav" -o -iname "*.mp4" \) -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          ext="$(lower_ext "$target")"
+          if [[ "$ext" == "wav" ]]; then
+            if process_audio_fix_wav_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          elif [[ "$ext" == "mp4" ]]; then
+            if process_audio_fix_mp4_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  ext="$(lower_ext "$in_file")"
+
+  if [[ "$ext" == "wav" ]]; then
+    process_audio_fix_wav_target "$in_file" "$ts"
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ext" == "mp4" ]]; then
+    if ! ensure_ffmpeg; then
+      return
+    fi
+
+    process_audio_fix_mp4_target "$in_file" "$ts"
+    wait_for_enter
+    return
+  fi
+
+  echo "Only .wav and .mp4 are supported here."
+  wait_for_enter
+}
+
+run_audio_pipeline() {
+  local mode="${1:-manual}"
+  local in_path ext ts target_dir target processed failed skipped retry_processed retry_failed
+  local -a failed_files retry_failed_files
+
+  echo
+  in_path="$(ask_file_path 'WAV/MP4 file or folder: ')"
+  if [[ -z "$in_path" || ( ! -f "$in_path" && ! -d "$in_path" ) ]]; then
+    echo "Valid WAV/MP4 path or folder required."
+    wait_for_enter
+    return
+  fi
+
+  if ! ensure_python_version; then
+    return
+  fi
+  ensure_python_env
+
+  ts="$(stamp)"
+
+  if [[ "$mode" == "fast" ]]; then
+    set_fast_pipeline_defaults
+  else
+    echo
+    echo "Choose optional processing steps in this order:"
+    echo "  1) Auto level"
+    echo "  2) De-Esser"
+    echo "  3) Spectrum Master"
+    echo "  4) Peak normalizer"
+    echo "  5) Peak ceiling"
+    echo "  6) Whine"
+
+    ask_dynamics_profile
+    ask_deesser_profile
+    ask_spectrum_profile
+    ask_peak_normalizer_profile
+    ask_peak_ceiling_profile
+    ask_whine_profile
+  fi
+
+  if [[ ${#DYNAMICS_ARGS[@]} -eq 0 \
+    && ${#DEESS_ARGS[@]} -eq 0 \
+    && ${#WHINE_ARGS[@]} -eq 0 \
+    && -z "$SPECTRUM_REF" \
+    && ${#PEAK_NORMALIZE_ARGS[@]} -eq 0 \
+    && ${#PEAK_CEILING_ARGS[@]} -eq 0 ]]; then
+    echo "No processing steps selected, nothing to do."
+    wait_for_enter
+    return
+  fi
+
+  if [[ -d "$in_path" ]]; then
+    if folder_contains_ext "$in_path" "mp4" && ! ensure_ffmpeg; then
+      return
+    fi
+    if ! prepare_spectrum_reference "$(cd "$in_path" && pwd)" "$ts"; then
+      echo "Spectrum reference preparation failed."
+      wait_for_enter
+      return
+    fi
+
+    processed=0
+    failed=0
+    skipped=0
+    failed_files=()
+    echo
+    echo "Batch folder: $in_path"
+    echo "Generated files from previous runs are skipped."
+
+    while IFS= read -r target; do
+      ext="$(lower_ext "$target")"
+      if is_generated_artifact "$target"; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if [[ "$ext" == "wav" ]]; then
+        if process_pipeline_wav_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      elif [[ "$ext" == "mp4" ]]; then
+        if process_pipeline_mp4_target "$target" "$ts"; then
+          processed=$((processed + 1))
+        else
+          failed=$((failed + 1))
+          failed_files+=("$target")
+        fi
+      fi
+    done < <(find "$in_path" -maxdepth 1 -type f \( -iname "*.wav" -o -iname "*.mp4" \) -print)
+
+    echo
+    echo "Batch done. Processed: $processed, failed: $failed, skipped: $skipped"
+    if (( failed > 0 )); then
+      print_failed_files "${failed_files[@]}"
+      if ask_retry_failed_files; then
+        retry_processed=0
+        retry_failed=0
+        retry_failed_files=()
+        for target in "${failed_files[@]}"; do
+          ext="$(lower_ext "$target")"
+          if [[ "$ext" == "wav" ]]; then
+            if process_pipeline_wav_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          elif [[ "$ext" == "mp4" ]]; then
+            if process_pipeline_mp4_target "$target" "$ts"; then
+              retry_processed=$((retry_processed + 1))
+            else
+              retry_failed=$((retry_failed + 1))
+              retry_failed_files+=("$target")
+            fi
+          fi
+        done
+        echo
+        echo "Retry done. Processed: $retry_processed, failed: $retry_failed"
+        print_failed_files "${retry_failed_files[@]}"
+      fi
+    fi
+    wait_for_enter
+    return
+  fi
+
+  ext="$(lower_ext "$in_path")"
+  target_dir="$(cd "$(dirname "$in_path")" && pwd)"
+
+  if ! prepare_spectrum_reference "$target_dir" "$ts"; then
+    echo "Spectrum reference preparation failed."
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ext" == "wav" ]]; then
+    process_pipeline_wav_target "$in_path" "$ts"
+    wait_for_enter
+    return
+  fi
+
+  if [[ "$ext" == "mp4" ]]; then
+    if ! ensure_ffmpeg; then
+      return
+    fi
+
+    process_pipeline_mp4_target "$in_path" "$ts"
     wait_for_enter
     return
   fi
@@ -631,25 +1929,21 @@ while true; do
   clear || true
   echo "Spectrum Transfer - Master Command"
   echo "----------------------------------"
-  echo "1) Spectrum Master (EQ + Auto-Level + optional De-Esser)"
-  echo "2) Whine Only (WAV/MP4)"
-  echo "3) MP4 -> WAV"
-  echo "4) Exit"
+  echo "1) Audio Pipeline (file/folder)"
+  echo "2) Fast Pipeline (standard settings, file/folder)"
+  echo "3) Exit"
   echo
-  printf "Choose [1/2/3/4]: "
+  printf "Choose [1/2/3]: "
   IFS= read -r choice
 
   case "${choice:-}" in
     1)
-      run_spectrum_master
+      run_audio_pipeline
       ;;
     2)
-      run_whine_only
+      run_audio_pipeline fast
       ;;
     3)
-      run_mp4_to_wav
-      ;;
-    4)
       echo "Bye."
       exit 0
       ;;

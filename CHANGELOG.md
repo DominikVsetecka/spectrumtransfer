@@ -6,6 +6,16 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+- Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, de-esser, whine, spectrum matching, peak normalize, and peak ceiling.
+- Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
+- `pipeline` CLI mode for applying the same ordered processing chain to WAV files.
+- `fix` CLI mode for applying whine reduction, auto-level, and optional de-esser without EQ transfer.
+- Folder batch summaries now list failed files and offer a retry pass for only those files.
+
+### Removed
+- Direct launcher menu entry for `MP4 -> WAV`.
+
 ## [0.1.2] - 2026-04-09
 
 ### Added

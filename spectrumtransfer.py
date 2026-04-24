@@ -512,6 +512,32 @@ def apply_peak_limiter(audio: np.ndarray, ceiling_dbfs: float) -> np.ndarray:
     return (audio * scale).astype(np.float32)
 
 
+def apply_peak_normalize(audio: np.ndarray, target_dbfs: float) -> np.ndarray:
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak <= EPS:
+        return audio.astype(np.float32, copy=True)
+    target_lin = float(_db_to_lin(float(target_dbfs)))
+    return (audio * (target_lin / peak)).astype(np.float32)
+
+
+def apply_peak_normalize_to_wav(processed_wav: Path, target_dbfs: float) -> str:
+    sr, x = read_wav(processed_wav)
+    before_peak = _peak_dbfs(x)
+    y = apply_peak_normalize(x, target_dbfs=target_dbfs)
+    after_peak = _peak_dbfs(y)
+    write_wav(processed_wav, sr, y)
+    return f"[peak-normalize] applied: target={target_dbfs:.1f} dBFS, peak {before_peak:.1f} -> {after_peak:.1f} dBFS."
+
+
+def apply_peak_ceiling_to_wav(processed_wav: Path, ceiling_dbfs: float) -> str:
+    sr, x = read_wav(processed_wav)
+    before_peak = _peak_dbfs(x)
+    y = apply_peak_limiter(x, ceiling_dbfs=ceiling_dbfs)
+    after_peak = _peak_dbfs(y)
+    write_wav(processed_wav, sr, y)
+    return f"[peak-ceiling] applied: ceiling={ceiling_dbfs:.1f} dBFS, peak {before_peak:.1f} -> {after_peak:.1f} dBFS."
+
+
 def apply_deesser(
     audio: np.ndarray,
     sr: int,
@@ -1423,6 +1449,39 @@ def build_common_parser() -> argparse.ArgumentParser:
     whine.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix, 0..1")
     add_whine_args(whine)
 
+    fix = sub.add_parser("fix", help="Apply whine reduction, auto-level, and optional de-esser to a target WAV.")
+    fix.add_argument("--target-wav", type=Path, required=True)
+    fix.add_argument("--out-wav", type=Path, required=True)
+    fix.add_argument("--n-fft", type=int, default=4096)
+    fix.add_argument("--hop", type=int, default=1024)
+    fix.add_argument("--mix", type=float, default=1.0, help="Whine reduction dry/wet mix, 0..1")
+    add_whine_args(fix)
+    add_dynamics_args(fix)
+
+    pipeline = sub.add_parser("pipeline", help="Apply selected audio processing steps in launcher order.")
+    pipeline.add_argument("--target-wav", type=Path, required=True)
+    pipeline.add_argument("--out-wav", type=Path, required=True)
+    pipeline.add_argument("--n-fft", type=int, default=4096)
+    pipeline.add_argument("--hop", type=int, default=1024)
+    pipeline.add_argument("--mix", type=float, default=1.0, help="Dry/wet mix for EQ/whine steps, 0..1")
+    add_dynamics_args(pipeline)
+    add_whine_args(pipeline)
+    pipeline.add_argument("--spectrum-reference-wav", type=Path, help="Optional desired/reference WAV for spectrum matching.")
+    pipeline.add_argument("--spectrum-curve-csv", type=Path, help="Optional saved curve CSV to apply.")
+    pipeline.add_argument("--out-curve-csv", type=Path, help="Optional path for the generated spectrum curve CSV.")
+    pipeline.add_argument("--audacity-preset", type=Path, help="Optional Audacity Filter Curve EQ preset text output.")
+    pipeline.add_argument("--audacity-points", type=int, default=180, help="Audacity preset point count (max 200).")
+    pipeline.add_argument("--audacity-filter-length", type=int, default=8191, help="FilterLength field for Audacity preset.")
+    pipeline.add_argument("--smooth-octaves", type=float, default=0.20, help="Log-frequency smoothing width in octaves.")
+    pipeline.add_argument("--min-freq", type=float, default=60.0, help="Only apply matching from this frequency up.")
+    pipeline.add_argument("--max-freq", type=float, default=16000.0, help="Only apply matching up to this frequency.")
+    pipeline.add_argument("--max-cut-db", type=float, default=-12.0, help="Maximum attenuation clamp.")
+    pipeline.add_argument("--max-boost-db", type=float, default=12.0, help="Maximum boost clamp.")
+    pipeline.add_argument("--peak-normalize", action="store_true", help="Normalize whole-file peak to target dBFS.")
+    pipeline.add_argument("--peak-normalize-dbfs", type=float, default=-6.0, help="Peak normalize target in dBFS.")
+    pipeline.add_argument("--peak-ceiling", action="store_true", help="Limit final peak to ceiling dBFS.")
+    pipeline.add_argument("--peak-ceiling-dbfs", type=float, default=-6.0, help="Peak ceiling in dBFS.")
+
     return p
 
 
@@ -1624,6 +1683,179 @@ def main() -> int:
             hop=args.hop,
             mix=args.mix,
         )
+        return 0
+
+    if args.command == "fix":
+        sr, x = read_wav(args.target_wav)
+        write_wav(args.out_wav, sr, x)
+        if args.whine_high_cut or args.whine_notch_hz:
+            curve = add_whine_reduction_to_curve(
+                curve=build_flat_curve(),
+                high_cut_enabled=args.whine_high_cut,
+                high_cut_freq_hz=args.whine_high_cut_freq_hz,
+                high_cut_gain_db=args.whine_high_cut_gain_db,
+                high_cut_q=args.whine_high_cut_q,
+                notch_freqs_hz=args.whine_notch_hz[:3],
+                notch_gain_db=args.whine_notch_gain_db,
+                notch_q=args.whine_notch_q,
+            )
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print("[whine] applied.")
+        if args.de_ess:
+            msg = apply_deesser_to_wav(
+                processed_wav=args.out_wav,
+                low_hz=args.de_ess_low_hz,
+                high_hz=args.de_ess_high_hz,
+                threshold_dbfs=args.de_ess_threshold_dbfs,
+                ratio=args.de_ess_ratio,
+                attack_ms=args.de_ess_attack_ms,
+                release_ms=args.de_ess_release_ms,
+                strength=args.de_ess_strength,
+            )
+            print(msg)
+        if args.auto_level:
+            msg = apply_auto_level_to_wav(
+                processed_wav=args.out_wav,
+                target_dbfs=args.target_dbfs,
+                floor_dbfs=args.level_floor_dbfs,
+                max_boost_db=args.max_auto_boost_db,
+                max_cut_db=args.max_auto_cut_db,
+                auto_attack_ms=args.auto_attack_ms,
+                auto_release_ms=args.auto_release_ms,
+                compressor_threshold_dbfs=args.compressor_threshold_dbfs,
+                compressor_ratio=args.compressor_ratio,
+                compressor_attack_ms=args.compressor_attack_ms,
+                compressor_release_ms=args.compressor_release_ms,
+                limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
+                strength=args.dynamics_strength,
+            )
+            print(msg)
+        return 0
+
+    if args.command == "pipeline":
+        sr, x = read_wav(args.target_wav)
+        write_wav(args.out_wav, sr, x)
+
+        if args.auto_level:
+            msg = apply_auto_level_to_wav(
+                processed_wav=args.out_wav,
+                target_dbfs=args.target_dbfs,
+                floor_dbfs=args.level_floor_dbfs,
+                max_boost_db=args.max_auto_boost_db,
+                max_cut_db=args.max_auto_cut_db,
+                auto_attack_ms=args.auto_attack_ms,
+                auto_release_ms=args.auto_release_ms,
+                compressor_threshold_dbfs=args.compressor_threshold_dbfs,
+                compressor_ratio=args.compressor_ratio,
+                compressor_attack_ms=args.compressor_attack_ms,
+                compressor_release_ms=args.compressor_release_ms,
+                limiter_ceiling_dbfs=args.limiter_ceiling_dbfs,
+                strength=args.dynamics_strength,
+            )
+            print(msg)
+
+        if args.de_ess:
+            msg = apply_deesser_to_wav(
+                processed_wav=args.out_wav,
+                low_hz=args.de_ess_low_hz,
+                high_hz=args.de_ess_high_hz,
+                threshold_dbfs=args.de_ess_threshold_dbfs,
+                ratio=args.de_ess_ratio,
+                attack_ms=args.de_ess_attack_ms,
+                release_ms=args.de_ess_release_ms,
+                strength=args.de_ess_strength,
+            )
+            print(msg)
+
+        if args.spectrum_reference_wav and args.spectrum_curve_csv:
+            raise ValueError("Use either --spectrum-reference-wav or --spectrum-curve-csv, not both.")
+
+        if args.spectrum_reference_wav:
+            curve = build_delta_curve_from_audio(
+                desired_wav=args.spectrum_reference_wav,
+                target_wav=args.out_wav,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                smooth_octaves=args.smooth_octaves,
+                min_freq=args.min_freq,
+                max_freq=args.max_freq,
+                max_cut_db=args.max_cut_db,
+                max_boost_db=args.max_boost_db,
+            )
+            if args.out_curve_csv:
+                save_curve_csv(args.out_curve_csv, curve)
+            maybe_write_audacity_preset(
+                path=args.audacity_preset,
+                curve=curve,
+                points=args.audacity_points,
+                min_freq=args.min_freq,
+                max_freq=args.max_freq,
+                filter_length=args.audacity_filter_length,
+            )
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print("[spectrum] matched from reference WAV.")
+
+        if args.spectrum_curve_csv:
+            curve = load_curve_csv(args.spectrum_curve_csv)
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print("[spectrum] applied curve CSV.")
+
+        if args.peak_normalize:
+            msg = apply_peak_normalize_to_wav(
+                processed_wav=args.out_wav,
+                target_dbfs=args.peak_normalize_dbfs,
+            )
+            print(msg)
+
+        if args.peak_ceiling:
+            msg = apply_peak_ceiling_to_wav(
+                processed_wav=args.out_wav,
+                ceiling_dbfs=args.peak_ceiling_dbfs,
+            )
+            print(msg)
+
+        if args.whine_high_cut or args.whine_notch_hz:
+            curve = add_whine_reduction_to_curve(
+                curve=build_flat_curve(),
+                high_cut_enabled=args.whine_high_cut,
+                high_cut_freq_hz=args.whine_high_cut_freq_hz,
+                high_cut_gain_db=args.whine_high_cut_gain_db,
+                high_cut_q=args.whine_high_cut_q,
+                notch_freqs_hz=args.whine_notch_hz[:3],
+                notch_gain_db=args.whine_notch_gain_db,
+                notch_q=args.whine_notch_q,
+            )
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print("[whine] applied.")
+
         return 0
 
     raise RuntimeError(f"Unhandled command: {args.command}")

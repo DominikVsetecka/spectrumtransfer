@@ -16,6 +16,7 @@ Core idea:
 - Spectrum/EQ transfer (`match`) from desired WAV to target WAV
 - Curve-only workflow from Audacity spectrum `.txt` files (`curve`)
 - Apply saved curve to WAV (`apply`)
+- Audio fix workflow (`fix`) for whine reduction, auto-level, and optional de-esser without EQ transfer
 - Whine-only cleanup with upper-band cut plus optional notch filters (`whine`)
 - Optional de-esser
 - Optional auto-level + compressor + limiter
@@ -51,18 +52,24 @@ The launcher validates `python3` and requires version `>= 3.9` before creating `
 
 Menu:
 
-1. `Spectrum Master (EQ + Auto-Level + optional De-Esser)`
-2. `Whine Only (WAV/MP4)`
-3. `MP4 -> WAV`
-4. `Exit`
+1. `Audio Pipeline (file/folder)`
+2. `Fast Pipeline (standard settings, file/folder)`
+3. `Exit`
 
-### Supported Spectrum Master Input Pairs
+The pipeline asks for a target `.wav`/`.mp4` file or a folder first, then offers these optional steps in order:
 
-- `desired.wav` + `target.wav`
-- `desired.txt` + `target.txt`
-- `curve.csv` + `target.wav` (order independent)
-- `desired.wav` + `target.mp4` (order independent)
-- `desired.mp4` + `target.mp4` (desired first, target second)
+- Auto level
+- De-Esser
+- Spectrum Master (`.wav`, `.csv`, or `.mp4` audio/curve reference; `.txt` spectrum references remain curve-only)
+- Peak normalizer to `-6 dBFS`
+- Peak ceiling at `-6 dBFS`
+- Whine reduction
+
+Folder processing is non-recursive and skips generated output files from previous runs.
+
+If a folder batch has failed files, the launcher prints the affected file paths at the end and asks whether only those failed files should be retried.
+
+Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, de-esser gentle, Spectrum Master off, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
 
 ## CLI (Advanced)
 
@@ -82,6 +89,20 @@ Useful flags:
 - `--whine-high-cut` / `--whine-notch-hz`
 - `--de-ess` (+ `--de-ess-*` params)
 - `--auto-level` (+ dynamics params)
+
+### Pipeline mode
+
+```bash
+python3 spectrumtransfer.py pipeline \
+  --target-wav vocal_to_fix.wav \
+  --out-wav vocal_processed.wav \
+  --auto-level \
+  --de-ess \
+  --whine-high-cut \
+  --spectrum-reference-wav desired_reference.wav \
+  --peak-normalize \
+  --peak-ceiling
+```
 
 ### 2) Build curve from Audacity spectrum exports
 
@@ -113,6 +134,18 @@ python3 spectrumtransfer.py whine \
   --whine-high-cut-gain-db -30 \
   --whine-high-cut-q 1.2 \
   --whine-notch-hz 15600 16800 18100
+```
+
+### 5) Apply whine reduction, auto-level, and de-esser
+
+```bash
+python3 spectrumtransfer.py fix \
+  --target-wav vocal_to_fix.wav \
+  --out-wav vocal_fixed.wav \
+  --whine-high-cut \
+  --whine-notch-hz 15600 16800 18100 \
+  --auto-level \
+  --de-ess
 ```
 
 ## Notes

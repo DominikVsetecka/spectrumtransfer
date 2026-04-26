@@ -20,6 +20,7 @@ Core idea:
 - Whine-only cleanup with upper-band cut plus optional notch filters (`whine`)
 - Optional de-esser
 - Optional Voice Clarity presence/air enhancement
+- Optional Second Step EQ for additional tested speech clarity shaping
 - Optional auto-level + compressor + limiter
 - MP4 audio extraction/remux workflows via the master command
 - Single user-facing launcher: `spectrumtransfer.command`
@@ -55,7 +56,8 @@ Menu:
 
 1. `Audio Pipeline (file/folder)`
 2. `Fast Pipeline (standard settings, file/folder)`
-3. `Exit`
+3. `MP4 -> WAV (file/folder)`
+4. `Exit`
 
 The pipeline asks for a target `.wav`/`.mp4` file or a folder first, then offers these optional steps in order:
 
@@ -63,6 +65,7 @@ The pipeline asks for a target `.wav`/`.mp4` file or a folder first, then offers
 - Spectrum Master (`.wav`, `.csv`, or `.mp4` audio/curve reference; `.txt` spectrum references remain curve-only)
 - De-Esser
 - Voice Clarity for gentle presence/air enhancement
+- Optional Second Step EQ curve based on the tested Audacity Graphic EQ shape
 - Peak normalizer to `-6 dBFS`
 - Peak ceiling at `-6 dBFS`
 - Whine reduction
@@ -73,7 +76,7 @@ If a folder batch has failed files, the launcher prints the affected file paths 
 
 Batch MP4 processing runs `ffmpeg` with stdin disabled so ffmpeg cannot consume the internal file list while a folder is being processed.
 
-Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, Spectrum Master off, de-esser gentle, Voice Clarity gentle, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
+Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, Spectrum Master off, de-esser gentle, Voice Clarity gentle, Second Step EQ off, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
 
 ## CLI (Advanced)
 
@@ -104,6 +107,7 @@ python3 spectrumtransfer.py pipeline \
   --spectrum-reference-wav desired_reference.wav \
   --de-ess \
   --voice-clarity gentle \
+  --second-step-eq \
   --peak-normalize \
   --peak-ceiling \
   --whine-high-cut

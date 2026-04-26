@@ -271,6 +271,31 @@ def build_voice_clarity_curve(profile: str) -> Curve:
     return Curve(np.asarray(freqs, dtype=np.float64), np.asarray(gains, dtype=np.float64))
 
 
+def build_second_step_eq_curve() -> Curve:
+    points = [
+        (60.0, 0.0),
+        (100.0, 0.0),
+        (125.0, 0.0),
+        (160.0, -2.6),
+        (200.0, -3.2),
+        (250.0, 0.0),
+        (315.0, 0.0),
+        (500.0, 0.0),
+        (1000.0, 0.0),
+        (2000.0, 0.0),
+        (5000.0, 0.0),
+        (6300.0, 0.0),
+        (8000.0, 3.2),
+        (10000.0, 6.0),
+        (12000.0, 3.0),
+        (16000.0, -5.0),
+        (20000.0, -12.0),
+        (40000.0, -12.0),
+    ]
+    freqs, gains = zip(*points)
+    return Curve(np.asarray(freqs, dtype=np.float64), np.asarray(gains, dtype=np.float64))
+
+
 def build_delta_curve_from_audio(
     desired_wav: Path,
     target_wav: Path,
@@ -1524,6 +1549,11 @@ def build_common_parser() -> argparse.ArgumentParser:
         default="off",
         help="Optional voice clarity EQ preset applied after de-essing.",
     )
+    pipeline.add_argument(
+        "--second-step-eq",
+        action="store_true",
+        help="Apply the optional second-step speech EQ after Voice Clarity.",
+    )
     pipeline.add_argument("--peak-normalize", action="store_true", help="Normalize whole-file peak to target dBFS.")
     pipeline.add_argument("--peak-normalize-dbfs", type=float, default=-6.0, help="Peak normalize target in dBFS.")
     pipeline.add_argument("--peak-ceiling", action="store_true", help="Limit final peak to ceiling dBFS.")
@@ -1879,6 +1909,18 @@ def main() -> int:
                 mix=args.mix,
             )
             print(f"[voice-clarity] applied: {args.voice_clarity}.")
+
+        if args.second_step_eq:
+            curve = build_second_step_eq_curve()
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print("[second-step-eq] applied.")
 
         if args.peak_normalize:
             msg = apply_peak_normalize_to_wav(

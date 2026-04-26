@@ -13,6 +13,7 @@ SPECTRUM_REF=""
 SPECTRUM_REF_WAV=""
 SPECTRUM_ARGS=()
 CLARITY_ARGS=()
+SECOND_EQ_ARGS=()
 PEAK_NORMALIZE_ARGS=()
 PEAK_CEILING_ARGS=()
 
@@ -446,6 +447,30 @@ ask_voice_clarity_profile() {
   esac
 }
 
+ask_second_eq_profile() {
+  local ans=""
+  SECOND_EQ_ARGS=()
+
+  echo
+  echo "Second Step EQ (Audacity-style clarity curve):"
+  echo "  0) off"
+  echo "  1) on"
+  printf "Choose [0/1] (default 0): "
+  IFS= read -r ans
+  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+
+  case "$ans" in
+    "1"|"on")
+      SECOND_EQ_ARGS=(--second-step-eq)
+      echo "Second Step EQ: on"
+      ;;
+    *)
+      SECOND_EQ_ARGS=()
+      echo "Second Step EQ: off"
+      ;;
+  esac
+}
+
 ask_peak_ceiling_profile() {
   PEAK_CEILING_ARGS=()
 
@@ -488,6 +513,7 @@ set_fast_pipeline_defaults() {
   SPECTRUM_REF_WAV=""
   SPECTRUM_ARGS=()
   CLARITY_ARGS=(--voice-clarity gentle)
+  SECOND_EQ_ARGS=()
   PEAK_NORMALIZE_ARGS=(--peak-normalize --peak-normalize-dbfs -6.0)
   PEAK_CEILING_ARGS=(--peak-ceiling --peak-ceiling-dbfs -6.0)
   WHINE_ARGS=(
@@ -506,6 +532,7 @@ set_fast_pipeline_defaults() {
   echo "  Spectrum Master: off"
   echo "  De-Esser: gentle"
   echo "  Voice Clarity: gentle"
+  echo "  Second Step EQ: off"
   echo "  Peak normalizer: -6 dBFS"
   echo "  Peak ceiling: -6 dBFS"
   echo "  Whine reduction: gentle"
@@ -882,6 +909,9 @@ process_pipeline_wav_target() {
   if (( ${#CLARITY_ARGS[@]} > 0 )); then
     cmd+=("${CLARITY_ARGS[@]}")
   fi
+  if (( ${#SECOND_EQ_ARGS[@]} > 0 )); then
+    cmd+=("${SECOND_EQ_ARGS[@]}")
+  fi
   if (( ${#WHINE_ARGS[@]} > 0 )); then
     cmd+=("${WHINE_ARGS[@]}")
   fi
@@ -954,6 +984,9 @@ process_pipeline_mp4_target() {
   fi
   if (( ${#CLARITY_ARGS[@]} > 0 )); then
     cmd+=("${CLARITY_ARGS[@]}")
+  fi
+  if (( ${#SECOND_EQ_ARGS[@]} > 0 )); then
+    cmd+=("${SECOND_EQ_ARGS[@]}")
   fi
   if (( ${#WHINE_ARGS[@]} > 0 )); then
     cmd+=("${WHINE_ARGS[@]}")
@@ -1836,14 +1869,16 @@ run_audio_pipeline() {
     echo "  2) Spectrum Master"
     echo "  3) De-Esser"
     echo "  4) Voice Clarity"
-    echo "  5) Peak normalizer"
-    echo "  6) Peak ceiling"
-    echo "  7) Whine"
+    echo "  5) Second Step EQ"
+    echo "  6) Peak normalizer"
+    echo "  7) Peak ceiling"
+    echo "  8) Whine"
 
     ask_dynamics_profile
     ask_spectrum_profile
     ask_deesser_profile
     ask_voice_clarity_profile
+    ask_second_eq_profile
     ask_peak_normalizer_profile
     ask_peak_ceiling_profile
     ask_whine_profile
@@ -1852,6 +1887,7 @@ run_audio_pipeline() {
   if [[ ${#DYNAMICS_ARGS[@]} -eq 0 \
     && ${#DEESS_ARGS[@]} -eq 0 \
     && ${#CLARITY_ARGS[@]} -eq 0 \
+    && ${#SECOND_EQ_ARGS[@]} -eq 0 \
     && ${#WHINE_ARGS[@]} -eq 0 \
     && -z "$SPECTRUM_REF" \
     && ${#PEAK_NORMALIZE_ARGS[@]} -eq 0 \
@@ -1978,9 +2014,10 @@ while true; do
   echo "----------------------------------"
   echo "1) Audio Pipeline (file/folder)"
   echo "2) Fast Pipeline (standard settings, file/folder)"
-  echo "3) Exit"
+  echo "3) MP4 -> WAV (file/folder)"
+  echo "4) Exit"
   echo
-  printf "Choose [1/2/3]: "
+  printf "Choose [1/2/3/4]: "
   IFS= read -r choice
 
   case "${choice:-}" in
@@ -1991,6 +2028,9 @@ while true; do
       run_audio_pipeline fast
       ;;
     3)
+      run_mp4_to_wav
+      ;;
+    4)
       echo "Bye."
       exit 0
       ;;

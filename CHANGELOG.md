@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 ### Added
 - Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, spectrum matching, de-esser, Voice Clarity, Second Step EQ, peak normalize, peak ceiling, and whine.
 - Optional Second Step EQ based on the tested Audacity Graphic EQ clarity curve.
+- Audio Pipeline exports now include a `*_settings_<timestamp>.txt` file recording selected settings and output paths.
 - Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, Voice Clarity gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
 - Simple launcher option for MP4 to WAV export.
 - `pipeline` CLI mode for applying the same ordered processing chain to WAV files.

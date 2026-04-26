@@ -76,6 +76,8 @@ If a folder batch has failed files, the launcher prints the affected file paths 
 
 Batch MP4 processing runs `ffmpeg` with stdin disabled so ffmpeg cannot consume the internal file list while a folder is being processed.
 
+Each successful Audio Pipeline or Fast Pipeline export also writes a `*_settings_<timestamp>.txt` file next to the result with the timestamp, source/output paths, selected settings, and command arguments.
+
 Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, Spectrum Master off, de-esser gentle, Voice Clarity gentle, Second Step EQ off, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
 
 ## CLI (Advanced)

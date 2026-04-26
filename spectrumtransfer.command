@@ -848,6 +848,88 @@ process_mp4_to_wav_target() {
   return 1
 }
 
+write_pipeline_settings_file() {
+  local settings_file="$1"
+  local source_path="$2"
+  local output_path="$3"
+  local output_wav="$4"
+  local ts="$5"
+  shift 5
+  local -a cmd=("$@")
+  local arg
+
+  {
+    echo "Spectrum Transfer Settings"
+    echo "=========================="
+    echo "Timestamp: $ts"
+    echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo
+    echo "Source: $source_path"
+    echo "Output: $output_path"
+    if [[ -n "$output_wav" && "$output_wav" != "$output_path" ]]; then
+      echo "Output WAV: $output_wav"
+    fi
+    echo
+    echo "Selected settings:"
+    if (( ${#DYNAMICS_ARGS[@]} > 0 )); then
+      echo "- Auto level: on (${DYNAMICS_ARGS[*]})"
+    else
+      echo "- Auto level: off"
+    fi
+    if [[ -n "$SPECTRUM_REF" ]]; then
+      echo "- Spectrum Master: on"
+      echo "  Reference: $SPECTRUM_REF"
+      if [[ -n "$SPECTRUM_REF_WAV" && "$SPECTRUM_REF_WAV" != "$SPECTRUM_REF" ]]; then
+        echo "  Reference WAV: $SPECTRUM_REF_WAV"
+      fi
+    else
+      echo "- Spectrum Master: off"
+    fi
+    if (( ${#DEESS_ARGS[@]} > 0 )); then
+      echo "- De-Esser: on (${DEESS_ARGS[*]})"
+    else
+      echo "- De-Esser: off"
+    fi
+    if (( ${#CLARITY_ARGS[@]} > 0 )); then
+      echo "- Voice Clarity: on (${CLARITY_ARGS[*]})"
+    else
+      echo "- Voice Clarity: off"
+    fi
+    if (( ${#SECOND_EQ_ARGS[@]} > 0 )); then
+      echo "- Second Step EQ: on"
+      echo "  160 Hz: -2.6 dB"
+      echo "  200 Hz: -3.2 dB"
+      echo "  8 kHz: +3.2 dB"
+      echo "  10 kHz: +6.0 dB"
+      echo "  12 kHz: +3.0 dB"
+      echo "  16 kHz: -5.0 dB"
+      echo "  20 kHz: -12.0 dB"
+    else
+      echo "- Second Step EQ: off"
+    fi
+    if (( ${#PEAK_NORMALIZE_ARGS[@]} > 0 )); then
+      echo "- Peak normalizer: on (${PEAK_NORMALIZE_ARGS[*]})"
+    else
+      echo "- Peak normalizer: off"
+    fi
+    if (( ${#PEAK_CEILING_ARGS[@]} > 0 )); then
+      echo "- Peak ceiling: on (${PEAK_CEILING_ARGS[*]})"
+    else
+      echo "- Peak ceiling: off"
+    fi
+    if (( ${#WHINE_ARGS[@]} > 0 )); then
+      echo "- Whine reduction: on (${WHINE_ARGS[*]})"
+    else
+      echo "- Whine reduction: off"
+    fi
+    echo
+    echo "Command:"
+    printf "  "
+    printf "%q " "${cmd[@]}"
+    echo
+  } > "$settings_file"
+}
+
 prepare_spectrum_reference() {
   local work_dir="$1"
   local ts="$2"
@@ -886,7 +968,7 @@ prepare_spectrum_reference() {
 process_pipeline_wav_target() {
   local target_wav="$1"
   local ts="$2"
-  local target_dir base out_wav curve_csv preset spectrum_ext
+  local target_dir base out_wav curve_csv preset settings_file spectrum_ext
   local -a cmd
 
   target_dir="$(cd "$(dirname "$target_wav")" && pwd)"
@@ -894,6 +976,7 @@ process_pipeline_wav_target() {
   out_wav="$target_dir/${base}_processed_${ts}.wav"
   curve_csv="$target_dir/${base}_curve_${ts}.csv"
   preset="$target_dir/${base}_audacity_${ts}.txt"
+  settings_file="$target_dir/${base}_settings_${ts}.txt"
 
   cmd=(
     "$PY_BIN" "$PY_SCRIPT" pipeline
@@ -937,7 +1020,9 @@ process_pipeline_wav_target() {
   echo
   echo "Processing WAV: $target_wav"
   if "${cmd[@]}"; then
+    write_pipeline_settings_file "$settings_file" "$target_wav" "$out_wav" "$out_wav" "$ts" "${cmd[@]}"
     echo "Output WAV: $out_wav"
+    echo "Settings TXT: $settings_file"
     if [[ -n "$SPECTRUM_REF" && "$(lower_ext "$SPECTRUM_REF")" != "csv" ]]; then
       echo "Curve CSV:  $curve_csv"
       echo "Preset TXT: $preset"
@@ -952,7 +1037,7 @@ process_pipeline_wav_target() {
 process_pipeline_mp4_target() {
   local target_mp4="$1"
   local ts="$2"
-  local target_dir base extract_wav out_wav out_mp4 curve_csv preset spectrum_ext
+  local target_dir base extract_wav out_wav out_mp4 curve_csv preset settings_file spectrum_ext
   local -a cmd
 
   target_dir="$(cd "$(dirname "$target_mp4")" && pwd)"
@@ -962,6 +1047,7 @@ process_pipeline_mp4_target() {
   out_mp4="$target_dir/${base}_processed_${ts}.mp4"
   curve_csv="$target_dir/${base}_curve_${ts}.csv"
   preset="$target_dir/${base}_audacity_${ts}.txt"
+  settings_file="$target_dir/${base}_settings_${ts}.txt"
 
   echo
   echo "Processing MP4: $target_mp4"
@@ -1013,9 +1099,11 @@ process_pipeline_mp4_target() {
   if "${cmd[@]}"; then
     echo "Writing processed audio back to MP4 ..."
     if remux_target_with_wav "$target_mp4" "$out_wav" "$out_mp4"; then
+      write_pipeline_settings_file "$settings_file" "$target_mp4" "$out_mp4" "$out_wav" "$ts" "${cmd[@]}"
       rm -f "$extract_wav"
       echo "Output MP4: $out_mp4"
       echo "Output WAV: $out_wav"
+      echo "Settings TXT: $settings_file"
       if [[ -n "$SPECTRUM_REF" && "$(lower_ext "$SPECTRUM_REF")" != "csv" ]]; then
         echo "Curve CSV:  $curve_csv"
         echo "Preset TXT: $preset"

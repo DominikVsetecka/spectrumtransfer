@@ -230,6 +230,47 @@ def build_flat_curve() -> Curve:
     )
 
 
+def build_voice_clarity_curve(profile: str) -> Curve:
+    profile = str(profile).lower().strip()
+    if profile == "clear":
+        points = [
+            (60.0, 0.0),
+            (180.0, 0.0),
+            (280.0, -1.5),
+            (420.0, -1.2),
+            (900.0, 0.0),
+            (2200.0, 0.6),
+            (3500.0, 2.5),
+            (5200.0, 1.4),
+            (8000.0, 0.8),
+            (11500.0, 1.5),
+            (16000.0, 0.8),
+            (22000.0, 0.0),
+            (40000.0, 0.0),
+        ]
+    elif profile == "gentle":
+        points = [
+            (60.0, 0.0),
+            (180.0, 0.0),
+            (280.0, -1.0),
+            (420.0, -0.8),
+            (900.0, 0.0),
+            (2200.0, 0.4),
+            (3200.0, 1.5),
+            (5000.0, 0.9),
+            (8000.0, 0.5),
+            (11000.0, 1.0),
+            (16000.0, 0.5),
+            (22000.0, 0.0),
+            (40000.0, 0.0),
+        ]
+    else:
+        return build_flat_curve()
+
+    freqs, gains = zip(*points)
+    return Curve(np.asarray(freqs, dtype=np.float64), np.asarray(gains, dtype=np.float64))
+
+
 def build_delta_curve_from_audio(
     desired_wav: Path,
     target_wav: Path,
@@ -1477,6 +1518,12 @@ def build_common_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--max-freq", type=float, default=16000.0, help="Only apply matching up to this frequency.")
     pipeline.add_argument("--max-cut-db", type=float, default=-12.0, help="Maximum attenuation clamp.")
     pipeline.add_argument("--max-boost-db", type=float, default=12.0, help="Maximum boost clamp.")
+    pipeline.add_argument(
+        "--voice-clarity",
+        choices=("off", "gentle", "clear"),
+        default="off",
+        help="Optional voice clarity EQ preset applied after de-essing.",
+    )
     pipeline.add_argument("--peak-normalize", action="store_true", help="Normalize whole-file peak to target dBFS.")
     pipeline.add_argument("--peak-normalize-dbfs", type=float, default=-6.0, help="Peak normalize target in dBFS.")
     pipeline.add_argument("--peak-ceiling", action="store_true", help="Limit final peak to ceiling dBFS.")
@@ -1820,6 +1867,18 @@ def main() -> int:
                 strength=args.de_ess_strength,
             )
             print(msg)
+
+        if args.voice_clarity != "off":
+            curve = build_voice_clarity_curve(args.voice_clarity)
+            apply_curve_to_wav(
+                target_wav=args.out_wav,
+                out_wav=args.out_wav,
+                curve=curve,
+                n_fft=args.n_fft,
+                hop=args.hop,
+                mix=args.mix,
+            )
+            print(f"[voice-clarity] applied: {args.voice_clarity}.")
 
         if args.peak_normalize:
             msg = apply_peak_normalize_to_wav(

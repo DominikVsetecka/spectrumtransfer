@@ -19,6 +19,7 @@ Core idea:
 - Audio fix workflow (`fix`) for whine reduction, auto-level, and optional de-esser without EQ transfer
 - Whine-only cleanup with upper-band cut plus optional notch filters (`whine`)
 - Optional de-esser
+- Optional Voice Clarity presence/air enhancement
 - Optional auto-level + compressor + limiter
 - MP4 audio extraction/remux workflows via the master command
 - Single user-facing launcher: `spectrumtransfer.command`
@@ -61,6 +62,7 @@ The pipeline asks for a target `.wav`/`.mp4` file or a folder first, then offers
 - Auto level
 - Spectrum Master (`.wav`, `.csv`, or `.mp4` audio/curve reference; `.txt` spectrum references remain curve-only)
 - De-Esser
+- Voice Clarity for gentle presence/air enhancement
 - Peak normalizer to `-6 dBFS`
 - Peak ceiling at `-6 dBFS`
 - Whine reduction
@@ -71,7 +73,7 @@ If a folder batch has failed files, the launcher prints the affected file paths 
 
 Batch MP4 processing runs `ffmpeg` with stdin disabled so ffmpeg cannot consume the internal file list while a folder is being processed.
 
-Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, de-esser gentle, Spectrum Master off, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
+Fast Pipeline uses these defaults without asking for every processing choice: auto-level gentle, Spectrum Master off, de-esser gentle, Voice Clarity gentle, peak normalizer `-6 dBFS`, peak ceiling `-6 dBFS`, and whine reduction gentle.
 
 ## CLI (Advanced)
 
@@ -99,11 +101,12 @@ python3 spectrumtransfer.py pipeline \
   --target-wav vocal_to_fix.wav \
   --out-wav vocal_processed.wav \
   --auto-level \
-  --de-ess \
-  --whine-high-cut \
   --spectrum-reference-wav desired_reference.wav \
+  --de-ess \
+  --voice-clarity gentle \
   --peak-normalize \
-  --peak-ceiling
+  --peak-ceiling \
+  --whine-high-cut
 ```
 
 ### 2) Build curve from Audacity spectrum exports

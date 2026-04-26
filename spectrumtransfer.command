@@ -12,6 +12,7 @@ WHINE_ARGS=()
 SPECTRUM_REF=""
 SPECTRUM_REF_WAV=""
 SPECTRUM_ARGS=()
+CLARITY_ARGS=()
 PEAK_NORMALIZE_ARGS=()
 PEAK_CEILING_ARGS=()
 
@@ -108,28 +109,34 @@ ask_retry_failed_files() {
   local ans
 
   echo
-  printf "Retry failed files now? [y/N]: "
+  echo "Retry failed files now?"
+  echo "  1) yes"
+  echo "  2) no"
+  printf "Choose [1/2] (default 2): "
   IFS= read -r ans
   ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
 
   case "$ans" in
-    y|yes|j|ja)
+    1|y|yes|j|ja)
       return 0
       ;;
   esac
   return 1
 }
 
-ask_yes_no() {
+ask_on_off() {
   local label="$1"
   local ans
 
-  printf "%s [y/N]: " "$label"
+  echo "$label:"
+  echo "  1) on"
+  echo "  2) off"
+  printf "Choose [1/2] (default 2): "
   IFS= read -r ans
   ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
 
   case "$ans" in
-    y|yes|j|ja)
+    1|on|y|yes|j|ja)
       return 0
       ;;
   esac
@@ -370,7 +377,7 @@ ask_spectrum_profile() {
   SPECTRUM_ARGS=()
 
   echo
-  if ! ask_yes_no "Spectrum Master (EQ transfer / curve apply)"; then
+  if ! ask_on_off "Spectrum Master (EQ transfer / curve apply)"; then
     echo "Spectrum Master: off"
     return
   fi
@@ -402,7 +409,7 @@ ask_peak_normalizer_profile() {
   PEAK_NORMALIZE_ARGS=()
 
   echo
-  if ask_yes_no "Peak normalizer to -6 dBFS"; then
+  if ask_on_off "Peak normalizer to -6 dBFS"; then
     PEAK_NORMALIZE_ARGS=(--peak-normalize --peak-normalize-dbfs -6.0)
     echo "Peak normalizer: -6 dBFS"
   else
@@ -410,11 +417,40 @@ ask_peak_normalizer_profile() {
   fi
 }
 
+ask_voice_clarity_profile() {
+  local ans=""
+  CLARITY_ARGS=()
+
+  echo
+  echo "Voice Clarity (presence + air for clearer speech):"
+  echo "  0) off"
+  echo "  1) gentle"
+  echo "  2) clear"
+  printf "Choose [0/1/2] (default 1): "
+  IFS= read -r ans
+  ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+
+  case "$ans" in
+    "0"|"off")
+      CLARITY_ARGS=()
+      echo "Voice Clarity: off"
+      ;;
+    "2"|"clear")
+      CLARITY_ARGS=(--voice-clarity clear)
+      echo "Voice Clarity: clear"
+      ;;
+    *)
+      CLARITY_ARGS=(--voice-clarity gentle)
+      echo "Voice Clarity: gentle"
+      ;;
+  esac
+}
+
 ask_peak_ceiling_profile() {
   PEAK_CEILING_ARGS=()
 
   echo
-  if ask_yes_no "Peak ceiling at -6 dBFS"; then
+  if ask_on_off "Peak ceiling at -6 dBFS"; then
     PEAK_CEILING_ARGS=(--peak-ceiling --peak-ceiling-dbfs -6.0)
     echo "Peak ceiling: -6 dBFS"
   else
@@ -451,6 +487,7 @@ set_fast_pipeline_defaults() {
   SPECTRUM_REF=""
   SPECTRUM_REF_WAV=""
   SPECTRUM_ARGS=()
+  CLARITY_ARGS=(--voice-clarity gentle)
   PEAK_NORMALIZE_ARGS=(--peak-normalize --peak-normalize-dbfs -6.0)
   PEAK_CEILING_ARGS=(--peak-ceiling --peak-ceiling-dbfs -6.0)
   WHINE_ARGS=(
@@ -466,8 +503,9 @@ set_fast_pipeline_defaults() {
   echo
   echo "Fast settings:"
   echo "  Auto level: gentle"
-  echo "  De-Esser: gentle"
   echo "  Spectrum Master: off"
+  echo "  De-Esser: gentle"
+  echo "  Voice Clarity: gentle"
   echo "  Peak normalizer: -6 dBFS"
   echo "  Peak ceiling: -6 dBFS"
   echo "  Whine reduction: gentle"
@@ -841,6 +879,9 @@ process_pipeline_wav_target() {
   if (( ${#DEESS_ARGS[@]} > 0 )); then
     cmd+=("${DEESS_ARGS[@]}")
   fi
+  if (( ${#CLARITY_ARGS[@]} > 0 )); then
+    cmd+=("${CLARITY_ARGS[@]}")
+  fi
   if (( ${#WHINE_ARGS[@]} > 0 )); then
     cmd+=("${WHINE_ARGS[@]}")
   fi
@@ -910,6 +951,9 @@ process_pipeline_mp4_target() {
   fi
   if (( ${#DEESS_ARGS[@]} > 0 )); then
     cmd+=("${DEESS_ARGS[@]}")
+  fi
+  if (( ${#CLARITY_ARGS[@]} > 0 )); then
+    cmd+=("${CLARITY_ARGS[@]}")
   fi
   if (( ${#WHINE_ARGS[@]} > 0 )); then
     cmd+=("${WHINE_ARGS[@]}")
@@ -1786,25 +1830,28 @@ run_audio_pipeline() {
   if [[ "$mode" == "fast" ]]; then
     set_fast_pipeline_defaults
   else
-  echo
-  echo "Choose optional processing steps in this order:"
-  echo "  1) Auto level"
-  echo "  2) Spectrum Master"
-  echo "  3) De-Esser"
-  echo "  4) Peak normalizer"
-  echo "  5) Peak ceiling"
-  echo "  6) Whine"
+    echo
+    echo "Choose optional processing steps in this order:"
+    echo "  1) Auto level"
+    echo "  2) Spectrum Master"
+    echo "  3) De-Esser"
+    echo "  4) Voice Clarity"
+    echo "  5) Peak normalizer"
+    echo "  6) Peak ceiling"
+    echo "  7) Whine"
 
-  ask_dynamics_profile
-  ask_spectrum_profile
-  ask_deesser_profile
-  ask_peak_normalizer_profile
-  ask_peak_ceiling_profile
-  ask_whine_profile
+    ask_dynamics_profile
+    ask_spectrum_profile
+    ask_deesser_profile
+    ask_voice_clarity_profile
+    ask_peak_normalizer_profile
+    ask_peak_ceiling_profile
+    ask_whine_profile
   fi
 
   if [[ ${#DYNAMICS_ARGS[@]} -eq 0 \
     && ${#DEESS_ARGS[@]} -eq 0 \
+    && ${#CLARITY_ARGS[@]} -eq 0 \
     && ${#WHINE_ARGS[@]} -eq 0 \
     && -z "$SPECTRUM_REF" \
     && ${#PEAK_NORMALIZE_ARGS[@]} -eq 0 \

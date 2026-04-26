@@ -7,14 +7,16 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 ## [Unreleased]
 
 ### Added
-- Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, spectrum matching, de-esser, peak normalize, peak ceiling, and whine.
-- Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
+- Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, spectrum matching, de-esser, Voice Clarity, peak normalize, peak ceiling, and whine.
+- Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, Voice Clarity gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
 - `pipeline` CLI mode for applying the same ordered processing chain to WAV files.
+- Voice Clarity EQ presets for conservative speech presence and air enhancement.
 - `fix` CLI mode for applying whine reduction, auto-level, and optional de-esser without EQ transfer.
 - Folder batch summaries now list failed files and offer a retry pass for only those files.
 
 ### Fixed
 - Prevented `ffmpeg` from consuming the batch file list from stdin, which could truncate subsequent paths and cause false "No such file or directory" errors.
+- Replaced remaining `y/N` launcher prompts with numeric `1/2` prompts for easier numpad operation.
 
 ### Removed
 - Direct launcher menu entry for `MP4 -> WAV`.

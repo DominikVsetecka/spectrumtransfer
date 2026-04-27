@@ -10,7 +10,7 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 - Unified launcher `Audio Pipeline` workflow: target file/folder first, then optional auto-level, spectrum matching, de-esser, Voice Clarity, Second Step EQ, peak normalize, peak ceiling, and whine.
 - Optional Second Step EQ based on the tested Audacity Graphic EQ clarity curve.
 - Audio Pipeline exports now include a `*_settings_<timestamp>.txt` file recording selected settings and output paths.
-- Fast Pipeline launcher option with standard settings for auto-level gentle, de-esser gentle, Voice Clarity gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
+- Fast Pipeline launcher option with standard settings for auto-level vocal fast, de-esser gentle, Voice Clarity gentle, peak normalize/ceiling at `-6 dBFS`, and whine gentle.
 - Simple launcher option for MP4 to WAV export.
 - `pipeline` CLI mode for applying the same ordered processing chain to WAV files.
 - Voice Clarity EQ presets for conservative speech presence and air enhancement.
@@ -20,6 +20,7 @@ The format is based on Keep a Changelog and this project uses Semantic Versionin
 ### Fixed
 - Prevented `ffmpeg` from consuming the batch file list from stdin, which could truncate subsequent paths and cause false "No such file or directory" errors.
 - Replaced remaining `y/N` launcher prompts with numeric `1/2` prompts for easier numpad operation.
+- Tuned the default auto-level preset to react faster on voice and reduce slow pumping/wavering.
 
 ## [0.1.2] - 2026-04-09
 

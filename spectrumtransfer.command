@@ -232,9 +232,10 @@ ask_dynamics_profile() {
   echo
   echo "Auto level / anti-clipping:"
   echo "  0) off"
-  echo "  1) gentle (target -6 dBFS, ceiling -3 dBFS)"
-  echo "  2) strong (target -5 dBFS, ceiling -3 dBFS)"
-  printf "Choose [0/1/2] (default 1): "
+  echo "  1) gentle smooth (target -6 dBFS, ceiling -3 dBFS)"
+  echo "  2) vocal fast (less pumping, target -7 dBFS, ceiling -3 dBFS)"
+  echo "  3) strong (target -5 dBFS, ceiling -3 dBFS)"
+  printf "Choose [0/1/2/3] (default 2): "
   IFS= read -r ans
   ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
 
@@ -243,7 +244,7 @@ ask_dynamics_profile() {
       DYNAMICS_ARGS=()
       echo "Auto level: off"
       ;;
-    "2"|"strong")
+    "3"|"strong")
       DYNAMICS_ARGS=(
         --auto-level
         --target-dbfs -5.0
@@ -261,7 +262,7 @@ ask_dynamics_profile() {
       )
       echo "Auto level: strong"
       ;;
-    *)
+    "1"|"gentle")
       DYNAMICS_ARGS=(
         --auto-level
         --target-dbfs -6.0
@@ -278,6 +279,24 @@ ask_dynamics_profile() {
         --dynamics-strength 1.0
       )
       echo "Auto level: gentle"
+      ;;
+    *)
+      DYNAMICS_ARGS=(
+        --auto-level
+        --target-dbfs -7.0
+        --level-floor-dbfs -36.0
+        --max-auto-boost-db 7.0
+        --max-auto-cut-db 10.0
+        --auto-attack-ms 18.0
+        --auto-release-ms 180.0
+        --compressor-threshold-dbfs -14.0
+        --compressor-ratio 2.0
+        --compressor-attack-ms 8.0
+        --compressor-release-ms 90.0
+        --limiter-ceiling-dbfs -3.0
+        --dynamics-strength 0.75
+      )
+      echo "Auto level: vocal fast"
       ;;
   esac
 }
@@ -486,18 +505,18 @@ ask_peak_ceiling_profile() {
 set_fast_pipeline_defaults() {
   DYNAMICS_ARGS=(
     --auto-level
-    --target-dbfs -6.0
-    --level-floor-dbfs -42.0
-    --max-auto-boost-db 12.0
-    --max-auto-cut-db 12.0
-    --auto-attack-ms 35.0
-    --auto-release-ms 450.0
-    --compressor-threshold-dbfs -12.0
-    --compressor-ratio 2.2
-    --compressor-attack-ms 12.0
-    --compressor-release-ms 120.0
+    --target-dbfs -7.0
+    --level-floor-dbfs -36.0
+    --max-auto-boost-db 7.0
+    --max-auto-cut-db 10.0
+    --auto-attack-ms 18.0
+    --auto-release-ms 180.0
+    --compressor-threshold-dbfs -14.0
+    --compressor-ratio 2.0
+    --compressor-attack-ms 8.0
+    --compressor-release-ms 90.0
     --limiter-ceiling-dbfs -3.0
-    --dynamics-strength 1.0
+    --dynamics-strength 0.75
   )
   DEESS_ARGS=(
     --de-ess
@@ -528,7 +547,7 @@ set_fast_pipeline_defaults() {
 
   echo
   echo "Fast settings:"
-  echo "  Auto level: gentle"
+  echo "  Auto level: vocal fast"
   echo "  Spectrum Master: off"
   echo "  De-Esser: gentle"
   echo "  Voice Clarity: gentle"
